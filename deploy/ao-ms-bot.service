@@ -1,0 +1,23 @@
+# systemd unit for running AO-MS-BOT 24/7.
+# Edit User= and the paths below to match your server, then install it:
+#
+#   sudo cp deploy/ao-ms-bot.service /etc/systemd/system/ao-ms-bot.service
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ao-ms-bot
+#
+[Unit]
+Description=AO-MS-BOT - Attorney Online master server monitor
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=aobot
+WorkingDirectory=/home/aobot/AO-MS-BOT
+ExecStart=/home/aobot/AO-MS-BOT/.venv/bin/python bot.py
+Environment=PYTHONUNBUFFERED=1
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

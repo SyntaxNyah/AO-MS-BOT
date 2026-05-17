@@ -1,0 +1,134 @@
+"""Fetches the master server list and turns each poll into stored history."""
+import logging
+from datetime import datetime, timezone
+
+import aiohttp
+
+import database as db
+from anomaly import analyze_hb
+from config import MS_URL, POLL_INTERVAL_MINUTES, RELIABLE_GAP_FACTOR
+
+log = logging.getLogger("monitor")
+
+
+def server_key(s):
+    return f"{s['ip']}:{s['port']}"
+
+
+def clean_ip(ip):
+    """The master list occasionally wraps an IP in markdown: [host](url)."""
+    if isinstance(ip, str) and ip.startswith("[") and "](" in ip:
+        return ip[1:ip.index("](")]
+    return ip
+
+
+async def fetch_servers(timeout=20):
+    """Return the current master server list as a list of normalised dicts."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(
+                MS_URL, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+            resp.raise_for_status()
+            data = await resp.json(content_type=None)
+
+    out = []
+    for s in data:
+        if not isinstance(s, dict) or "ip" not in s or "port" not in s:
+            continue
+        try:
+            port = int(s["port"])
+        except (TypeError, ValueError):
+            continue
+        hb = s.get("hbcounter")
+        out.append({
+            "ip": str(s.get("ip")),
+            "port": port,
+            "players": int(s.get("players") or 0),
+            "name": str(s.get("name") or "(unnamed)"),
+            "description": str(s.get("description") or ""),
+            "hbcounter": int(hb) if hb is not None else None,
+        })
+    return out
+
+
+def _mk(ts, key, name, type_, severity, detail):
+    return {"ts": ts, "server_key": key, "name": name,
+            "type": type_, "severity": severity, "detail": detail}
+
+
+async def run_poll():
+    """Poll the master server, store snapshots and detect anomalies.
+
+    Returns (summary, anomalies) where anomalies is a list of anomaly dicts.
+    """
+    now = datetime.now(timezone.utc)
+    now_iso = now.isoformat()
+
+    try:
+        servers = await fetch_servers()
+    except Exception as e:                       # noqa: BLE001 - log and report
+        log.warning("master server fetch failed: %s", e)
+        db.record_poll(now_iso, ok=0, server_count=0)
+        return ({"ok": False, "error": str(e), "count": 0, "players": 0,
+                 "anomalies": 0}, [])
+
+    last_poll = db.get_last_successful_poll()
+    if last_poll:
+        prev_dt = datetime.fromisoformat(last_poll["ts"])
+        elapsed_min = (now - prev_dt).total_seconds() / 60.0
+    else:
+        elapsed_min = POLL_INTERVAL_MINUTES
+    gap_reliable = elapsed_min <= POLL_INTERVAL_MINUTES * RELIABLE_GAP_FACTOR
+
+    anomalies = []
+    current_keys = set()
+
+    for s in servers:
+        key = server_key(s)
+        current_keys.add(key)
+        existing = db.get_server(key)
+        prev_snap = db.latest_snapshot(key)
+        was_online = existing is not None and existing["status"] == "online"
+
+        if existing is None:
+            db.upsert_server(key, s["ip"], s["port"], s["name"], now_iso)
+            anomalies.append(_mk(now_iso, key, s["name"], "new_server", "info",
+                                 "New server appeared on the master list."))
+        else:
+            if existing["status"] == "offline":
+                anomalies.append(_mk(now_iso, key, s["name"], "reappeared", "low",
+                                     "Server is back on the master list."))
+            elif existing["name"] != s["name"]:
+                anomalies.append(_mk(now_iso, key, s["name"], "name_change", "low",
+                                     f"Renamed: '{existing['name']}' -> "
+                                     f"'{s['name']}'."))
+            db.touch_server(key, s["name"], now_iso)
+
+        if prev_snap is not None and s["hbcounter"] is not None:
+            gap = (now - datetime.fromisoformat(prev_snap["ts"])).total_seconds() / 60.0
+            reliable = gap_reliable and was_online
+            result = analyze_hb(prev_snap["hbcounter"], s["hbcounter"], gap,
+                                reliable=reliable)
+            if result:
+                anomalies.append(_mk(now_iso, key, s["name"], *result))
+
+        db.add_snapshot(key, now_iso, s["name"], s["players"], s["hbcounter"])
+
+    # Servers still marked online but absent from this poll have disappeared.
+    for row in db.online_servers():
+        if row["server_key"] not in current_keys:
+            db.set_server_status(row["server_key"], "offline")
+            anomalies.append(_mk(now_iso, row["server_key"], row["name"],
+                                 "disappeared", "alert",
+                                 "Server vanished from the master list."))
+
+    db.record_poll(now_iso, ok=1, server_count=len(servers))
+    for a in anomalies:
+        db.add_anomaly(a)
+
+    summary = {
+        "ok": True,
+        "count": len(servers),
+        "players": sum(s["players"] for s in servers),
+        "anomalies": len(anomalies),
+    }
+    return (summary, anomalies)
