@@ -24,11 +24,13 @@ CREATE TABLE IF NOT EXISTS snapshots (
     hbcounter  INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_snap_key_ts ON snapshots(server_key, ts);
+CREATE INDEX IF NOT EXISTS idx_snap_ts ON snapshots(ts);
 CREATE TABLE IF NOT EXISTS polls (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     ts           TEXT,
     ok           INTEGER,
-    server_count INTEGER
+    server_count INTEGER,
+    player_count INTEGER
 );
 CREATE TABLE IF NOT EXISTS anomalies (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -57,14 +59,45 @@ def init_db():
     os.makedirs(DATA_DIR, exist_ok=True)
     with _db() as c:
         c.executescript(SCHEMA)
+        _migrate(c)
+
+
+def _migrate(c):
+    """Bring an older database up to the current schema."""
+    cols = {r["name"] for r in c.execute("PRAGMA table_info(polls)")}
+    if "player_count" not in cols:
+        c.execute("ALTER TABLE polls ADD COLUMN player_count INTEGER")
+        # Backfill the global player count of past polls from stored snapshots.
+        c.execute(
+            "UPDATE polls SET player_count = ("
+            "  SELECT COALESCE(SUM(players), 0) FROM snapshots"
+            "  WHERE snapshots.ts = polls.ts"
+            ") WHERE player_count IS NULL AND ok=1")
 
 
 # --- polls ---
 
-def record_poll(ts, ok, server_count):
+def record_poll(ts, ok, server_count, player_count=0):
     with _db() as c:
-        c.execute("INSERT INTO polls (ts, ok, server_count) VALUES (?,?,?)",
-                  (ts, 1 if ok else 0, server_count))
+        c.execute(
+            "INSERT INTO polls (ts, ok, server_count, player_count) "
+            "VALUES (?,?,?,?)",
+            (ts, 1 if ok else 0, server_count, player_count))
+
+
+def poll_history(since=None):
+    """Successful polls oldest-first, for the global player-count graph.
+
+    `since` is an optional ISO timestamp lower bound (inclusive).
+    """
+    q = "SELECT ts, server_count, player_count FROM polls WHERE ok=1"
+    params = []
+    if since is not None:
+        q += " AND ts>=?"
+        params.append(since)
+    q += " ORDER BY id"
+    with _db() as c:
+        return c.execute(q, params).fetchall()
 
 
 def get_last_successful_poll():
