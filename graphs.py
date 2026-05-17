@@ -79,11 +79,12 @@ def _downsample(rows, target=_TARGET_POINTS):
     return out
 
 
-def make_hb_graph(name, rows, anomalies=None):
+def make_hb_graph(name, rows, anomalies=None, addr=None):
     """Build a PNG with HB counter and player history. `rows` is oldest-first.
 
     `anomalies` is an optional list of anomaly rows; counter drops and restarts
-    inside the graphed window are marked on the HB axis.
+    inside the graphed window are marked on the HB axis. `addr` is the server's
+    `ip:port` address, shown so identically named servers stay distinguishable.
     """
     pts = _downsample(rows)
     times = [p["ts"] for p in pts]
@@ -103,6 +104,9 @@ def make_hb_graph(name, rows, anomalies=None):
                             gridspec_kw={"height_ratios": [3, 2]})
     fig.suptitle(f"{name} -- historical tracking",
                  fontsize=13, fontweight="bold")
+    if addr:
+        fig.text(0.5, 0.945, addr, ha="center", va="top",
+                 fontsize=9, color="#666666", family="monospace")
 
     # --- HB counter ---
     ax1.fill_between(times, hb_lo, hb_hi, color="#4f9dff", alpha=0.22,
@@ -163,7 +167,8 @@ def make_hb_graph(name, rows, anomalies=None):
     all_players = [r["players"] for r in rows]
     peak = max(all_players) if all_players else 0
     mean = sum(all_players) / len(all_players) if all_players else 0
-    summary = (f"Span: {span}\n"
+    summary = ((f"Address: {addr}\n" if addr else "") +
+               f"Span: {span}\n"
                f"Snapshots: {len(rows)}  (plotted {len(pts)})\n"
                f"Restarts: {restarts}   Drops >35: {drops}\n"
                f"Players  peak {peak} / mean {mean:.1f}")
