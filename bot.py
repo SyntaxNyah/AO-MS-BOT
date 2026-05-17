@@ -91,6 +91,8 @@ async def poll_loop():
     else:
         write_event(f"POLL FAILED -- {summary.get('error')}")
 
+    await post_poll_summary(summary)
+
     for a in anomalies:
         write_event(f"  [{a['severity'].upper()}] {a['type']} -- "
                     f"{a['name']} -- {a['detail']}")
@@ -102,21 +104,54 @@ async def before_poll():
     await bot.wait_until_ready()
 
 
-async def dispatch_alert(a):
-    """Send an anomaly to the appropriate Discord channel."""
-    integrity = a["type"] in INTEGRITY_TYPES
-    channel_id = config.INTEGRITY_CHANNEL_ID if integrity else config.EVENTS_CHANNEL_ID
-    channel_id = channel_id or config.EVENTS_CHANNEL_ID or config.INTEGRITY_CHANNEL_ID
+async def resolve_channel(channel_id):
+    """Look up a channel by ID, falling back to an API fetch on cache miss."""
     if not channel_id:
-        return
-
+        return None
     channel = bot.get_channel(channel_id)
     if channel is None:
         try:
             channel = await bot.fetch_channel(channel_id)
         except Exception:
             log.warning("could not resolve channel %s", channel_id)
-            return
+            return None
+    return channel
+
+
+async def post_poll_summary(summary):
+    """Post a summary of every poll to the events channel."""
+    channel = await resolve_channel(
+        config.EVENTS_CHANNEL_ID or config.INTEGRITY_CHANNEL_ID)
+    if channel is None:
+        return
+
+    if summary["ok"]:
+        embed = discord.Embed(title="Master server poll", color=0x41C97A,
+                              timestamp=datetime.now(timezone.utc))
+        embed.add_field(name="Servers online", value=str(summary["count"]))
+        embed.add_field(name="Players online", value=str(summary["players"]))
+        embed.add_field(name="Anomalies this poll",
+                        value=str(summary["anomalies"]))
+    else:
+        embed = discord.Embed(
+            title="Master server poll failed",
+            description=f"Could not fetch the server list: {summary.get('error')}",
+            color=0xE03A3A, timestamp=datetime.now(timezone.utc))
+    embed.set_footer(text=f"Polling every {config.POLL_INTERVAL_MINUTES} min")
+    try:
+        await channel.send(embed=embed)
+    except discord.DiscordException as e:
+        log.warning("failed to send poll summary: %s", e)
+
+
+async def dispatch_alert(a):
+    """Send an anomaly to the appropriate Discord channel."""
+    integrity = a["type"] in INTEGRITY_TYPES
+    primary = config.INTEGRITY_CHANNEL_ID if integrity else config.EVENTS_CHANNEL_ID
+    channel = await resolve_channel(
+        primary or config.EVENTS_CHANNEL_ID or config.INTEGRITY_CHANNEL_ID)
+    if channel is None:
+        return
 
     title = "HB counter anomaly" if integrity else "Server event"
     embed = discord.Embed(
