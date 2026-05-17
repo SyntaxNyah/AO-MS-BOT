@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
@@ -275,9 +275,12 @@ _GRAPH_PERIODS = {
 @bot.tree.command(
     name="graph",
     description="Historical HB-counter and players graph for a server.")
-@app_commands.describe(query="Part of the server name",
-                       period="How far back to graph (default: all history)",
-                       days="Custom: graph this many days back (overrides period)")
+@app_commands.describe(
+    query="Part of the server name",
+    period="How far back to graph (default: all history)",
+    days="Custom: graph this many days back",
+    weeks="Custom: graph this many weeks back",
+    start_date="Graph everything since this date (YYYY-MM-DD)")
 @app_commands.choices(period=[
     app_commands.Choice(name="Last day", value="day"),
     app_commands.Choice(name="Last week", value="week"),
@@ -287,20 +290,37 @@ _GRAPH_PERIODS = {
 ])
 async def graph_cmd(interaction: discord.Interaction, query: str,
                     period: app_commands.Choice[str] = None,
-                    days: app_commands.Range[int, 1, None] = None):
+                    days: app_commands.Range[int, 1, None] = None,
+                    weeks: app_commands.Range[int, 1, None] = None,
+                    start_date: str = None):
     srv, err = resolve_server(query)
     if err:
         await interaction.response.send_message(err, ephemeral=True)
         return
 
     await interaction.response.defer()
+    now = datetime.now(timezone.utc)
     since = None
-    if days is not None:
-        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
-        label = f"last {days} day{'s' if days != 1 else ''}"
+    # Precedence: explicit start date > custom days/weeks > preset period.
+    if start_date:
+        try:
+            d = date.fromisoformat(start_date.strip())
+        except ValueError:
+            await interaction.followup.send(
+                f"`{start_date}` is not a valid date -- use YYYY-MM-DD.")
+            return
+        since = datetime(d.year, d.month, d.day, tzinfo=timezone.utc).isoformat()
+        label = f"since {d.isoformat()}"
+    elif days or weeks:
+        since = (now - timedelta(days=days or 0, weeks=weeks or 0)).isoformat()
+        parts = []
+        if weeks:
+            parts.append(f"{weeks} week{'s' if weeks != 1 else ''}")
+        if days:
+            parts.append(f"{days} day{'s' if days != 1 else ''}")
+        label = "last " + " ".join(parts)
     elif period and period.value in _GRAPH_PERIODS:
-        since = (datetime.now(timezone.utc)
-                 - _GRAPH_PERIODS[period.value]).isoformat()
+        since = (now - _GRAPH_PERIODS[period.value]).isoformat()
         label = period.name
     else:
         label = period.name if period else "all time"
