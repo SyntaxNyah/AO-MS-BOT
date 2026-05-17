@@ -276,7 +276,8 @@ _GRAPH_PERIODS = {
     name="graph",
     description="Historical HB-counter and players graph for a server.")
 @app_commands.describe(query="Part of the server name",
-                       period="How far back to graph (default: all history)")
+                       period="How far back to graph (default: all history)",
+                       days="Custom: graph this many days back (overrides period)")
 @app_commands.choices(period=[
     app_commands.Choice(name="Last day", value="day"),
     app_commands.Choice(name="Last week", value="week"),
@@ -285,18 +286,24 @@ _GRAPH_PERIODS = {
     app_commands.Choice(name="All time", value="all"),
 ])
 async def graph_cmd(interaction: discord.Interaction, query: str,
-                    period: app_commands.Choice[str] = None):
+                    period: app_commands.Choice[str] = None,
+                    days: app_commands.Range[int, 1, None] = None):
     srv, err = resolve_server(query)
     if err:
         await interaction.response.send_message(err, ephemeral=True)
         return
 
     await interaction.response.defer()
-    label = period.name if period else "all time"
     since = None
-    if period and period.value in _GRAPH_PERIODS:
+    if days is not None:
+        since = (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+        label = f"last {days} day{'s' if days != 1 else ''}"
+    elif period and period.value in _GRAPH_PERIODS:
         since = (datetime.now(timezone.utc)
                  - _GRAPH_PERIODS[period.value]).isoformat()
+        label = period.name
+    else:
+        label = period.name if period else "all time"
     rows = db.server_history(srv["server_key"], since=since)
     if len(rows) < 2:
         await interaction.followup.send(
