@@ -15,7 +15,10 @@ bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
 - Full historical database (SQLite) &mdash; every server, every poll
 - Plain-text event log (`data/events.log`) &mdash; a running notepad of everything that happened
 - Anomaly detection with alerts posted to a Discord channel
-- On-demand historical graphs of HB counter and player counts
+- On-demand historical graphs of HB counter and player counts, with rollovers,
+  restarts, counter drops and offline/return events marked on the chart
+- Servers are tracked by their `ip:port` address, so two servers sharing a
+  display name never collide &mdash; and they can be looked up by address
 
 ## How it works
 
@@ -48,17 +51,38 @@ flags:
 | `name_change` | A tracked server changed its name |
 | `hb_jump` | The HB counter rose far faster than the ~1/minute rate allows |
 | `hb_drop` | The HB counter fell in a way a normal 50k rollover cannot explain |
+| `hb_rollover` | The HB counter wrapped normally at 50000 (informational) |
+| `hb_restart` | The HB counter reset because the server was restarted |
+| `hb_reset` | The HB counter slammed to the floor too fast for a genuine restart &mdash; likely a manual reset |
 
 HB-counter anomalies are posted to their own channel so they are easy to review
 separately from routine events. High-severity HB alerts ping `@here`.
+
+### Graphs
+
+`/graph` draws a server's HB counter and player history on one chart. The
+server's `ip:port` address is printed on the chart (and in the embed) so
+identically named servers stay distinguishable. Every notable event inside the
+graphed window is marked on the timeline:
+
+| Marker | Event |
+|--------|-------|
+| Red solid line | Counter drop &mdash; an unexplained fall or a too-fast manual reset |
+| Purple dotted line | Rollover &mdash; the normal counter wrap at 50000 |
+| Orange dashed line | Restart &mdash; the counter reset from a server restart |
+| Grey dashed line | The server dropped off the master list |
+| Green solid line | The server came back onto the master list |
+
+A summary box on the chart counts the rollovers, restarts, drops, and
+offline/return cycles over the graphed span.
 
 ## Commands
 
 | Command | Description |
 |---------|-------------|
 | `/list` | Show the current server list |
-| `/server <query>` | Details and recent history for one server |
-| `/graph <query>` | Historical HB-counter and players graph for a server |
+| `/server <query>` | Details and recent history for one server; `query` is part of a server name or an exact `ip:port` address |
+| `/graph <query>` | Historical HB-counter and players graph for a server; `query` is part of a server name or an exact `ip:port` address |
 | `/playercount [period] [view]` | Global player-count graph: trend or daily peak/low, filterable by day/week/month/year/all time |
 | `/anomalies [count] [alerts_only]` | Show recently detected anomalies |
 | `/stats` | Monitoring statistics (polls, snapshots, uptime) |
