@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import discord
 from discord import app_commands
@@ -264,21 +264,43 @@ async def server_cmd(interaction: discord.Interaction, query: str):
     await interaction.response.send_message(embed=embed)
 
 
+_GRAPH_PERIODS = {
+    "day": timedelta(days=1),
+    "week": timedelta(weeks=1),
+    "month": timedelta(days=30),
+    "year": timedelta(days=365),
+}
+
+
 @bot.tree.command(
     name="graph",
     description="Historical HB-counter and players graph for a server.")
-@app_commands.describe(query="Part of the server name")
-async def graph_cmd(interaction: discord.Interaction, query: str):
+@app_commands.describe(query="Part of the server name",
+                       period="How far back to graph (default: all history)")
+@app_commands.choices(period=[
+    app_commands.Choice(name="Last 24 hours", value="day"),
+    app_commands.Choice(name="Last week", value="week"),
+    app_commands.Choice(name="Last month", value="month"),
+    app_commands.Choice(name="Last year", value="year"),
+    app_commands.Choice(name="All time", value="all"),
+])
+async def graph_cmd(interaction: discord.Interaction, query: str,
+                    period: app_commands.Choice[str] = None):
     srv, err = resolve_server(query)
     if err:
         await interaction.response.send_message(err, ephemeral=True)
         return
 
     await interaction.response.defer()
-    rows = db.server_history(srv["server_key"])
+    label = period.name if period else "all time"
+    since = None
+    if period and period.value in _GRAPH_PERIODS:
+        since = (datetime.now(timezone.utc)
+                 - _GRAPH_PERIODS[period.value]).isoformat()
+    rows = db.server_history(srv["server_key"], since=since)
     if len(rows) < 2:
         await interaction.followup.send(
-            f"Not enough history for **{srv['name']}** yet "
+            f"Not enough history for **{srv['name']}** in {label} "
             "-- need at least 2 polls.")
         return
 
@@ -287,7 +309,7 @@ async def graph_cmd(interaction: discord.Interaction, query: str):
         graphs.make_hb_graph, srv["name"], rows, anomalies)
     embed = discord.Embed(
         title=f"{srv['name']} -- history",
-        description=f"{len(rows)} data points",
+        description=f"{len(rows)} data points ({label})",
         color=0x4F9DFF)
     embed.set_image(url="attachment://history.png")
     await interaction.followup.send(embed=embed, file=img)
