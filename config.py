@@ -39,3 +39,9 @@ ROLLOVER_DROP = 1000    # 50000 -> 49000
 HB_RATE_MAX = 2.0       # most plausible counter gain per minute (true rate ~1/min)
 HB_MARGIN = 12          # absolute slack on top of the rate-based expectation
 RELIABLE_GAP_FACTOR = 3  # a poll gap below interval*this is "reliable" for alerting
+# The master server keeps a dead server listed for ~30 min after its last
+# heartbeat. A server taken down and brought back starts its counter from
+# scratch, so a counter that has only had time to climb this far after a drop
+# is an ordinary restart -- not a fault. A few counts of headroom above the
+# 30-min window keep borderline restarts from being mistaken for tampering.
+HB_RESTART_WINDOW = 35
