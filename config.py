@@ -23,7 +23,7 @@ INTEGRITY_CHANNEL_ID = _int("INTEGRITY_CHANNEL_ID", 0)
 
 # --- Master server polling ---
 MS_URL = _str("MS_URL", "https://servers.aceattorneyonline.com/servers")
-POLL_INTERVAL_MINUTES = _int("POLL_INTERVAL_MINUTES", 5)
+POLL_INTERVAL_MINUTES = _int("POLL_INTERVAL_MINUTES", 1)
 
 # --- Storage ---
 DATA_DIR = _str("DATA_DIR", "data")

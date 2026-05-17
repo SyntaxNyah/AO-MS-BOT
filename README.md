@@ -3,14 +3,14 @@
 A Discord bot that tracks the [Attorney Online master server list](https://servers.aceattorneyonline.com/servers).
 
 It answers `/list` on demand, and in the background it polls the master server
-every 5 minutes, saving a full snapshot of every server. Over time this builds a
+every minute, saving a full snapshot of every server. Over time this builds a
 complete historical archive of player counts and heartbeat (HB) counters. The
 bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
 
 ## Features
 
 - `/list` &mdash; the current server list, on demand
-- Automatic polling every 5 minutes (configurable)
+- Automatic polling every minute (configurable)
 - Full historical database (SQLite) &mdash; every server, every poll
 - Plain-text event log (`data/events.log`) &mdash; a running notepad of everything that happened
 - Anomaly detection with alerts posted to a Discord channel
@@ -18,17 +18,20 @@ bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
 
 ## How it works
 
-Every 5 minutes the bot fetches the master server list and stores one snapshot
-per server (name, players, HB counter). Nothing is ever overwritten, so you keep
-a full time series for every server.
+Every minute the bot fetches the master server list and stores one snapshot per
+server (name, players, HB counter). The master server itself only refreshes
+roughly every 5 minutes, so many consecutive polls record identical values
+&mdash; that is intentional, and it means any unexpected change is captured
+within a minute. Nothing is ever overwritten, so you keep a full time series for
+every server.
 
 ### Heartbeat counters
 
 Each server reports an ever-rising `hbcounter`. Under normal operation it
-increases by about **1 per minute** &mdash; roughly **4&ndash;5 per 5-minute
-poll**. When it reaches **50000** it rolls over and continues from **49000**
-&mdash; this is expected behaviour, and the bot labels it as a normal rollover
-rather than an anomaly.
+increases by about **1 per minute** &mdash; roughly **4&ndash;5 between the
+master server's ~5-minute refreshes**. When it reaches **50000** it rolls over
+and continues from **49000** &mdash; this is expected behaviour, and the bot
+labels it as a normal rollover rather than an anomaly.
 
 ### Anomaly detection
 
