@@ -5,6 +5,7 @@ snapshots -- by collapsing dense minute-level data into time buckets that keep
 the min/max range, so restarts and spikes survive the downsampling.
 """
 import io
+from collections import defaultdict
 from datetime import datetime
 
 import discord
@@ -175,3 +176,120 @@ def make_hb_graph(name, rows, anomalies=None):
     fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
     buf.seek(0)
     return discord.File(buf, filename="history.png")
+
+
+def _downsample_players(rows, target=_TARGET_POINTS):
+    """Collapse oldest-first poll rows into <= target time buckets.
+
+    Each bucket keeps min/max/mean of the global player count so long spans
+    render without averaging away peaks and dips.
+    """
+    pts = [{"ts": _parse(r["ts"]), "players": r["player_count"]}
+           for r in rows if r["player_count"] is not None]
+
+    if len(pts) <= target:
+        return [{"ts": p["ts"], "players": p["players"],
+                 "p_min": p["players"], "p_max": p["players"]} for p in pts]
+
+    start = pts[0]["ts"].timestamp()
+    end = pts[-1]["ts"].timestamp()
+    width = (end - start) / target or 1.0
+
+    buckets = {}
+    for p in pts:
+        idx = min(int((p["ts"].timestamp() - start) / width), target - 1)
+        buckets.setdefault(idx, []).append(p)
+
+    out = []
+    for idx in sorted(buckets):
+        group = buckets[idx]
+        players = [g["players"] for g in group]
+        out.append({
+            "ts": group[len(group) // 2]["ts"],
+            "players": sum(players) / len(players),
+            "p_min": min(players),
+            "p_max": max(players),
+        })
+    return out
+
+
+def make_player_graph(rows, label, view="trend"):
+    """Build a PNG of the global Attorney Online player count over time.
+
+    `rows` are successful poll rows oldest-first, each with a `player_count`.
+    `view` is "trend" (continuous line with min-max range) or "daily"
+    (per-day peak / low / mean breakdown).
+    """
+    vals = [(_parse(r["ts"]), r["player_count"])
+            for r in rows if r["player_count"] is not None]
+    peak_t, peak_v = max(vals, key=lambda v: v[1])
+    low_t, low_v = min(vals, key=lambda v: v[1])
+    mean_v = sum(v for _, v in vals) / len(vals)
+    span = _human_span(vals[-1][0] - vals[0][0])
+
+    fig = Figure(figsize=(14, 7))
+    ax = fig.subplots()
+    fig.suptitle("Attorney Online -- global player count",
+                 fontsize=14, fontweight="bold")
+
+    if view == "daily":
+        by_day = defaultdict(list)
+        for t, v in vals:
+            by_day[t.date()].append(v)
+        days = sorted(by_day)
+        dts = [datetime(d.year, d.month, d.day) for d in days]
+        peaks = [max(by_day[d]) for d in days]
+        lows = [min(by_day[d]) for d in days]
+        means = [sum(by_day[d]) / len(by_day[d]) for d in days]
+        ax.fill_between(dts, lows, peaks, color="#41c97a", alpha=0.25,
+                        linewidth=0, label="daily low-peak range")
+        ax.plot(dts, peaks, color="#2e9e5b", linewidth=1.6, marker="o",
+                markersize=3, label="daily peak")
+        ax.plot(dts, lows, color="#e8503a", linewidth=1.4, marker="o",
+                markersize=3, label="daily low")
+        ax.plot(dts, means, color="#4f9dff", linewidth=1.2, linestyle="--",
+                label="daily mean")
+    else:
+        pts = _downsample_players(rows)
+        times = [p["ts"] for p in pts]
+        players = [p["players"] for p in pts]
+        p_lo = [p["p_min"] for p in pts]
+        p_hi = [p["p_max"] for p in pts]
+        ax.fill_between(times, p_lo, p_hi, color="#41c97a", alpha=0.22,
+                        linewidth=0, label="min-max range")
+        ax.plot(times, players, color="#2e9e5b", linewidth=1.6,
+                label="players online")
+        ax.plot([peak_t], [peak_v], marker="^", color="#2e9e5b",
+                markersize=11, linestyle="none", label=f"peak {peak_v}")
+        ax.plot([low_t], [low_v], marker="v", color="#e8503a",
+                markersize=11, linestyle="none", label=f"lowest {low_v}")
+
+    ax.axhline(mean_v, color="#4f9dff", linewidth=1.0, linestyle=":",
+               alpha=0.8)
+    ax.set_ylabel("Players online")
+    ax.set_xlabel("Time (UTC)")
+    ax.grid(True, alpha=0.3)
+    ax.set_ylim(bottom=0)
+    ax.legend(loc="upper left", fontsize=9, framealpha=0.9)
+
+    locator = mdates.AutoDateLocator(maxticks=12)
+    ax.xaxis.set_major_locator(locator)
+    ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+    for lbl in ax.get_xticklabels():
+        lbl.set_rotation(20)
+        lbl.set_horizontalalignment("right")
+
+    summary = (f"Range:  {label}\n"
+               f"Span:   {span}   Polls: {len(vals)}\n"
+               f"Peak:   {peak_v}  ({peak_t:%Y-%m-%d %H:%M} UTC)\n"
+               f"Lowest: {low_v}  ({low_t:%Y-%m-%d %H:%M} UTC)\n"
+               f"Mean:   {mean_v:.1f}")
+    ax.text(0.99, 0.97, summary, transform=ax.transAxes,
+            ha="right", va="top", fontsize=9, family="monospace",
+            bbox={"boxstyle": "round", "facecolor": "#f4f4f4",
+                  "edgecolor": "#cccccc", "alpha": 0.9})
+
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
+    buf.seek(0)
+    return discord.File(buf, filename="playercount.png")

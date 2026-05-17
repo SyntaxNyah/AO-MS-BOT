@@ -272,6 +272,35 @@ _GRAPH_PERIODS = {
 }
 
 
+def _resolve_since(now, period, days, weeks, start_date):
+    """Turn the graph time-filter options into (since_iso, label, error).
+
+    Precedence: explicit start date > custom days/weeks > preset period.
+    `since_iso` and `error` are None when not applicable.
+    """
+    if start_date:
+        try:
+            d = date.fromisoformat(start_date.strip())
+        except ValueError:
+            return None, None, (f"`{start_date}` is not a valid date "
+                                "-- use YYYY-MM-DD.")
+        since = datetime(d.year, d.month, d.day,
+                         tzinfo=timezone.utc).isoformat()
+        return since, f"since {d.isoformat()}", None
+    if days or weeks:
+        since = (now - timedelta(days=days or 0, weeks=weeks or 0)).isoformat()
+        parts = []
+        if weeks:
+            parts.append(f"{weeks} week{'s' if weeks != 1 else ''}")
+        if days:
+            parts.append(f"{days} day{'s' if days != 1 else ''}")
+        return since, "last " + " ".join(parts), None
+    if period and period.value in _GRAPH_PERIODS:
+        return ((now - _GRAPH_PERIODS[period.value]).isoformat(),
+                period.name, None)
+    return None, period.name if period else "all time", None
+
+
 @bot.tree.command(
     name="graph",
     description="Historical HB-counter and players graph for a server.")
@@ -300,30 +329,10 @@ async def graph_cmd(interaction: discord.Interaction, query: str,
 
     await interaction.response.defer()
     now = datetime.now(timezone.utc)
-    since = None
-    # Precedence: explicit start date > custom days/weeks > preset period.
-    if start_date:
-        try:
-            d = date.fromisoformat(start_date.strip())
-        except ValueError:
-            await interaction.followup.send(
-                f"`{start_date}` is not a valid date -- use YYYY-MM-DD.")
-            return
-        since = datetime(d.year, d.month, d.day, tzinfo=timezone.utc).isoformat()
-        label = f"since {d.isoformat()}"
-    elif days or weeks:
-        since = (now - timedelta(days=days or 0, weeks=weeks or 0)).isoformat()
-        parts = []
-        if weeks:
-            parts.append(f"{weeks} week{'s' if weeks != 1 else ''}")
-        if days:
-            parts.append(f"{days} day{'s' if days != 1 else ''}")
-        label = "last " + " ".join(parts)
-    elif period and period.value in _GRAPH_PERIODS:
-        since = (now - _GRAPH_PERIODS[period.value]).isoformat()
-        label = period.name
-    else:
-        label = period.name if period else "all time"
+    since, label, err = _resolve_since(now, period, days, weeks, start_date)
+    if err:
+        await interaction.followup.send(err)
+        return
     rows = db.server_history(srv["server_key"], since=since)
     if len(rows) < 2:
         await interaction.followup.send(
@@ -339,6 +348,60 @@ async def graph_cmd(interaction: discord.Interaction, query: str,
         description=f"{len(rows)} data points ({label})",
         color=0x4F9DFF)
     embed.set_image(url="attachment://history.png")
+    await interaction.followup.send(embed=embed, file=img)
+
+
+@bot.tree.command(
+    name="playercount",
+    description="Graph the global Attorney Online player count over time.")
+@app_commands.describe(
+    period="How far back to graph (default: all history)",
+    view="Continuous trend, or per-day peak/low breakdown",
+    days="Custom: graph this many days back",
+    weeks="Custom: graph this many weeks back",
+    start_date="Graph everything since this date (YYYY-MM-DD)")
+@app_commands.choices(
+    period=[
+        app_commands.Choice(name="Last day", value="day"),
+        app_commands.Choice(name="Last week", value="week"),
+        app_commands.Choice(name="Last month", value="month"),
+        app_commands.Choice(name="Last year", value="year"),
+        app_commands.Choice(name="All time", value="all"),
+    ],
+    view=[
+        app_commands.Choice(name="Trend (continuous)", value="trend"),
+        app_commands.Choice(name="Daily peak / low", value="daily"),
+    ])
+async def playercount_cmd(interaction: discord.Interaction,
+                          period: app_commands.Choice[str] = None,
+                          view: app_commands.Choice[str] = None,
+                          days: app_commands.Range[int, 1, None] = None,
+                          weeks: app_commands.Range[int, 1, None] = None,
+                          start_date: str = None):
+    await interaction.response.defer()
+    now = datetime.now(timezone.utc)
+    since, label, err = _resolve_since(now, period, days, weeks, start_date)
+    if err:
+        await interaction.followup.send(err)
+        return
+
+    rows = [r for r in db.poll_history(since=since)
+            if r["player_count"] is not None]
+    if len(rows) < 2:
+        await interaction.followup.send(
+            f"Not enough global player-count history in {label} "
+            "-- need at least 2 polls.")
+        return
+
+    view_value = view.value if view else "trend"
+    img = await asyncio.to_thread(
+        graphs.make_player_graph, rows, label, view_value)
+    kind = "daily peak / low" if view_value == "daily" else "trend"
+    embed = discord.Embed(
+        title="Attorney Online -- global player count",
+        description=f"{len(rows)} polls ({label}) -- {kind}",
+        color=0x41C97A)
+    embed.set_image(url="attachment://playercount.png")
     await interaction.followup.send(embed=embed, file=img)
 
 

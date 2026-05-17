@@ -59,6 +59,7 @@ separately from routine events. High-severity HB alerts ping `@here`.
 | `/list` | Show the current server list |
 | `/server <query>` | Details and recent history for one server |
 | `/graph <query>` | Historical HB-counter and players graph for a server |
+| `/playercount [period] [view]` | Global player-count graph: trend or daily peak/low, filterable by day/week/month/year/all time |
 | `/anomalies [count] [alerts_only]` | Show recently detected anomalies |
 | `/stats` | Monitoring statistics (polls, snapshots, uptime) |
 | `/poll` | Run a master-server poll immediately |

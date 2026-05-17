@@ -121,14 +121,16 @@ async def run_poll():
                                  "disappeared", "alert",
                                  "Server vanished from the master list."))
 
-    db.record_poll(now_iso, ok=1, server_count=len(servers))
+    total_players = sum(s["players"] for s in servers)
+    db.record_poll(now_iso, ok=1, server_count=len(servers),
+                   player_count=total_players)
     for a in anomalies:
         db.add_anomaly(a)
 
     summary = {
         "ok": True,
         "count": len(servers),
-        "players": sum(s["players"] for s in servers),
+        "players": total_players,
         "anomalies": len(anomalies),
     }
     return (summary, anomalies)
