@@ -132,16 +132,25 @@ def latest_snapshot(key):
             (key,)).fetchone()
 
 
-def server_history(key, limit=None):
-    """Snapshots for a server, oldest-first. limit=None returns full history."""
+def server_history(key, limit=None, since=None):
+    """Snapshots for a server, oldest-first.
+
+    limit=None returns full history. `since` is an optional ISO timestamp
+    lower bound (inclusive) used to graph by day/week/month/year.
+    """
+    where = "server_key=?"
+    params = [key]
+    if since is not None:
+        where += " AND ts>=?"
+        params.append(since)
     with _db() as c:
         if limit is None:
             return c.execute(
-                "SELECT * FROM snapshots WHERE server_key=? ORDER BY id",
-                (key,)).fetchall()
+                f"SELECT * FROM snapshots WHERE {where} ORDER BY id",
+                params).fetchall()
         rows = c.execute(
-            "SELECT * FROM snapshots WHERE server_key=? ORDER BY id DESC LIMIT ?",
-            (key, limit)).fetchall()
+            f"SELECT * FROM snapshots WHERE {where} ORDER BY id DESC LIMIT ?",
+            params + [limit]).fetchall()
     return list(reversed(rows))
 
 
