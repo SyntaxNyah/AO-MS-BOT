@@ -14,10 +14,17 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
-# Anomalies worth marking on the chart: a counter that moved backwards (the
-# server lost its heartbeat count) or a drop big enough to look like tampering.
+# Anomalies worth marking on the chart, grouped by how they're drawn:
+#   drops     -- a counter fall nothing can explain, or a too-fast manual reset
+#   rollovers -- the normal counter wrap at HB_CAP
+#   restarts  -- the counter reset because the server was restarted
+#   gone      -- the server dropped off the master list
+#   returned  -- the server came back onto the master list
 _DROP_TYPES = {"hb_drop", "hb_reset"}
-_RESTART_TYPES = {"hb_restart", "hb_rollover"}
+_ROLLOVER_TYPES = {"hb_rollover"}
+_RESTART_TYPES = {"hb_restart"}
+_GONE_TYPES = {"disappeared"}
+_RETURN_TYPES = {"reappeared"}
 
 # Buckets to render at most; dense history is downsampled down to this.
 _TARGET_POINTS = 900
@@ -79,11 +86,12 @@ def _downsample(rows, target=_TARGET_POINTS):
     return out
 
 
-def make_hb_graph(name, rows, anomalies=None):
+def make_hb_graph(name, rows, anomalies=None, addr=None):
     """Build a PNG with HB counter and player history. `rows` is oldest-first.
 
     `anomalies` is an optional list of anomaly rows; counter drops and restarts
-    inside the graphed window are marked on the HB axis.
+    inside the graphed window are marked on the HB axis. `addr` is the server's
+    `ip:port` address, shown so identically named servers stay distinguishable.
     """
     pts = _downsample(rows)
     times = [p["ts"] for p in pts]
@@ -103,6 +111,9 @@ def make_hb_graph(name, rows, anomalies=None):
                             gridspec_kw={"height_ratios": [3, 2]})
     fig.suptitle(f"{name} -- historical tracking",
                  fontsize=13, fontweight="bold")
+    if addr:
+        fig.text(0.5, 0.945, addr, ha="center", va="top",
+                 fontsize=9, color="#666666", family="monospace")
 
     # --- HB counter ---
     ax1.fill_between(times, hb_lo, hb_hi, color="#4f9dff", alpha=0.22,
@@ -113,7 +124,7 @@ def make_hb_graph(name, rows, anomalies=None):
     # Show the full counter value (49246) instead of matplotlib's +4.92e4 offset.
     ax1.ticklabel_format(axis="y", style="plain", useOffset=False)
 
-    drops = restarts = 0
+    drops = rollovers = restarts = gone = returned = 0
     if anomalies:
         for a in anomalies:
             try:
@@ -122,13 +133,27 @@ def make_hb_graph(name, rows, anomalies=None):
                 continue
             if not (times[0] <= t <= times[-1]):
                 continue
-            if a["type"] in _DROP_TYPES:
+            atype = a["type"]
+            if atype in _DROP_TYPES:
                 ax1.axvline(t, color="#e8503a", linewidth=1.0, alpha=0.7)
                 drops += 1
-            elif a["type"] in _RESTART_TYPES:
+            elif atype in _ROLLOVER_TYPES:
+                ax1.axvline(t, color="#9b59b6", linewidth=0.9, alpha=0.55,
+                            linestyle=":")
+                rollovers += 1
+            elif atype in _RESTART_TYPES:
                 ax1.axvline(t, color="#f0a23a", linewidth=0.9, alpha=0.55,
                             linestyle="--")
                 restarts += 1
+            elif atype in _GONE_TYPES:
+                for ax in (ax1, ax2):
+                    ax.axvline(t, color="#888888", linewidth=1.0, alpha=0.6,
+                               linestyle="--")
+                gone += 1
+            elif atype in _RETURN_TYPES:
+                for ax in (ax1, ax2):
+                    ax.axvline(t, color="#41c97a", linewidth=1.2, alpha=0.75)
+                returned += 1
 
     legend = [
         Line2D([], [], color="#4f9dff", linewidth=1.6, label="HB counter"),
@@ -137,9 +162,18 @@ def make_hb_graph(name, rows, anomalies=None):
     if drops:
         legend.append(Line2D([], [], color="#e8503a", linewidth=1.0,
                               label=f"drop >35 ({drops})"))
+    if rollovers:
+        legend.append(Line2D([], [], color="#9b59b6", linewidth=1.0,
+                              linestyle=":", label=f"rollover ({rollovers})"))
     if restarts:
         legend.append(Line2D([], [], color="#f0a23a", linewidth=1.0,
-                              linestyle="--", label=f"restart / reset ({restarts})"))
+                              linestyle="--", label=f"restart ({restarts})"))
+    if gone:
+        legend.append(Line2D([], [], color="#888888", linewidth=1.0,
+                              linestyle="--", label=f"went offline ({gone})"))
+    if returned:
+        legend.append(Line2D([], [], color="#41c97a", linewidth=1.2,
+                              label=f"came back ({returned})"))
     ax1.legend(handles=legend, loc="upper left", fontsize=8, framealpha=0.9)
 
     # --- Players ---
@@ -163,9 +197,12 @@ def make_hb_graph(name, rows, anomalies=None):
     all_players = [r["players"] for r in rows]
     peak = max(all_players) if all_players else 0
     mean = sum(all_players) / len(all_players) if all_players else 0
-    summary = (f"Span: {span}\n"
+    summary = ((f"Address: {addr}\n" if addr else "") +
+               f"Span: {span}\n"
                f"Snapshots: {len(rows)}  (plotted {len(pts)})\n"
-               f"Restarts: {restarts}   Drops >35: {drops}\n"
+               f"Rollovers: {rollovers}   Restarts: {restarts}   "
+               f"Drops >35: {drops}\n"
+               f"Went offline / came back: {gone} / {returned}\n"
                f"Players  peak {peak} / mean {mean:.1f}")
     ax1.text(0.99, 0.97, summary, transform=ax1.transAxes,
              ha="right", va="top", fontsize=8, family="monospace",

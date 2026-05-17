@@ -178,15 +178,24 @@ async def dispatch_alert(a):
 # --------------------------------------------------------------------------
 
 def resolve_server(query):
-    """Return (server_row, None) for a unique match, else (None, message)."""
-    matches = db.find_servers(query)
+    """Return (server_row, None) for a unique match, else (None, message).
+
+    An exact `ip:port` address always resolves uniquely -- so servers that
+    share a name can still be picked apart by their address.
+    """
+    q = query.strip()
+    exact = db.get_server(q)
+    if exact is not None:
+        return exact, None
+    matches = db.find_servers(q)
     if not matches:
         return None, f"No tracked server matches `{query}`."
     if len(matches) > 1:
         names = "\n".join(f"- {m['name']} (`{m['server_key']}`)"
                           for m in matches[:15])
         return None, (f"Multiple servers match `{query}`:\n{names}\n"
-                      "Please be more specific.")
+                      "Please be more specific, or pass the exact address "
+                      "shown in brackets.")
     return matches[0], None
 
 
@@ -232,7 +241,8 @@ async def list_cmd(interaction: discord.Interaction):
 
 @bot.tree.command(name="server",
                   description="Show details and recent history for one server.")
-@app_commands.describe(query="Part of the server name")
+@app_commands.describe(
+    query="Part of the server name, or an exact IP:port address")
 async def server_cmd(interaction: discord.Interaction, query: str):
     srv, err = resolve_server(query)
     if err:
@@ -305,7 +315,7 @@ def _resolve_since(now, period, days, weeks, start_date):
     name="graph",
     description="Historical HB-counter and players graph for a server.")
 @app_commands.describe(
-    query="Part of the server name",
+    query="Part of the server name, or an exact IP:port address",
     period="How far back to graph (default: all history)",
     days="Custom: graph this many days back",
     weeks="Custom: graph this many weeks back",
@@ -342,10 +352,11 @@ async def graph_cmd(interaction: discord.Interaction, query: str,
 
     anomalies = db.server_anomalies(srv["server_key"], limit=5000)
     img = await asyncio.to_thread(
-        graphs.make_hb_graph, srv["name"], rows, anomalies)
+        graphs.make_hb_graph, srv["name"], rows, anomalies,
+        srv["server_key"])
     embed = discord.Embed(
         title=f"{srv['name']} -- history",
-        description=f"{len(rows)} data points ({label})",
+        description=f"`{srv['server_key']}`\n{len(rows)} data points ({label})",
         color=0x4F9DFF)
     embed.set_image(url="attachment://history.png")
     await interaction.followup.send(embed=embed, file=img)
