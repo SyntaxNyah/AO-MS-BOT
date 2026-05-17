@@ -278,7 +278,7 @@ _GRAPH_PERIODS = {
 @app_commands.describe(query="Part of the server name",
                        period="How far back to graph (default: all history)")
 @app_commands.choices(period=[
-    app_commands.Choice(name="Last 24 hours", value="day"),
+    app_commands.Choice(name="Last day", value="day"),
     app_commands.Choice(name="Last week", value="week"),
     app_commands.Choice(name="Last month", value="month"),
     app_commands.Choice(name="Last year", value="year"),
