@@ -1,0 +1,41 @@
+"""Configuration loaded from the environment / .env file."""
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+
+def _int(name, default):
+    raw = (os.getenv(name) or "").strip()
+    return int(raw) if raw else default
+
+
+def _str(name, default):
+    return (os.getenv(name) or "").strip() or default
+
+
+# --- Discord ---
+DISCORD_TOKEN = _str("DISCORD_TOKEN", "")
+GUILD_ID = _int("GUILD_ID", 0)
+EVENTS_CHANNEL_ID = _int("EVENTS_CHANNEL_ID", 0)
+INTEGRITY_CHANNEL_ID = _int("INTEGRITY_CHANNEL_ID", 0)
+
+# --- Master server polling ---
+MS_URL = _str("MS_URL", "https://servers.aceattorneyonline.com/servers")
+POLL_INTERVAL_MINUTES = _int("POLL_INTERVAL_MINUTES", 1)
+
+# --- Storage ---
+DATA_DIR = _str("DATA_DIR", "data")
+DB_PATH = os.path.join(DATA_DIR, "ao_monitor.db")
+EVENTS_LOG = os.path.join(DATA_DIR, "events.log")
+BOT_LOG = os.path.join(DATA_DIR, "bot.log")
+
+# --- Heartbeat-counter analysis tuning ---
+# Servers report an ever-rising hbcounter. It climbs ~1 per minute, and when it
+# reaches HB_CAP it rolls over and continues from (HB_CAP - ROLLOVER_DROP).
+HB_CAP = 50000          # counter resets when it reaches this value
+ROLLOVER_DROP = 1000    # 50000 -> 49000
+HB_RATE_MAX = 2.0       # most plausible counter gain per minute (true rate ~1/min)
+HB_MARGIN = 12          # absolute slack on top of the rate-based expectation
+RELIABLE_GAP_FACTOR = 3  # a poll gap below interval*this is "reliable" for alerting
