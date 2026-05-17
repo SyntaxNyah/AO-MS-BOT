@@ -282,7 +282,9 @@ async def graph_cmd(interaction: discord.Interaction, query: str):
             "-- need at least 2 polls.")
         return
 
-    img = await asyncio.to_thread(graphs.make_hb_graph, srv["name"], rows)
+    anomalies = db.server_anomalies(srv["server_key"], limit=5000)
+    img = await asyncio.to_thread(
+        graphs.make_hb_graph, srv["name"], rows, anomalies)
     embed = discord.Embed(
         title=f"{srv['name']} -- history",
         description=f"{len(rows)} data points",

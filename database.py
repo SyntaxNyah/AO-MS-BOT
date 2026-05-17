@@ -132,8 +132,13 @@ def latest_snapshot(key):
             (key,)).fetchone()
 
 
-def server_history(key, limit=2000):
+def server_history(key, limit=None):
+    """Snapshots for a server, oldest-first. limit=None returns full history."""
     with _db() as c:
+        if limit is None:
+            return c.execute(
+                "SELECT * FROM snapshots WHERE server_key=? ORDER BY id",
+                (key,)).fetchall()
         rows = c.execute(
             "SELECT * FROM snapshots WHERE server_key=? ORDER BY id DESC LIMIT ?",
             (key, limit)).fetchall()
