@@ -47,8 +47,7 @@ def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True):
     if 0 <= cur_hb <= HB_RESTART_WINDOW:
         return ("hb_restart", "info",
                 f"HB reset {prev_hb} -> {cur_hb} -- server looks restarted "
-                f"(counter within the {HB_RESTART_WINDOW}-min heartbeat "
-                f"window).")
+                f"(counter still within restart range, <= {HB_RESTART_WINDOW}).")
 
     sev = "alert" if reliable else "info"
     note = "" if reliable else " (long polling gap -- unverified)"
