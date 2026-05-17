@@ -11,6 +11,7 @@ bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
 
 - `/list` &mdash; the current server list, on demand
 - Automatic polling every minute (configurable)
+- A poll summary posted to your events channel after every poll
 - Full historical database (SQLite) &mdash; every server, every poll
 - Plain-text event log (`data/events.log`) &mdash; a running notepad of everything that happened
 - Anomaly detection with alerts posted to a Discord channel
@@ -23,7 +24,8 @@ server (name, players, HB counter). The master server itself only refreshes
 roughly every 5 minutes, so many consecutive polls record identical values
 &mdash; that is intentional, and it means any unexpected change is captured
 within a minute. Nothing is ever overwritten, so you keep a full time series for
-every server.
+every server. After each poll the bot posts a short summary (servers online,
+players, anomalies) to the events channel.
 
 ### Heartbeat counters
 
