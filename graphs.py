@@ -15,7 +15,7 @@ from matplotlib.patches import Patch
 
 # Anomalies worth marking on the chart: a counter that moved backwards (the
 # server lost its heartbeat count) or a drop big enough to look like tampering.
-_DROP_TYPES = {"hb_drop"}
+_DROP_TYPES = {"hb_drop", "hb_reset"}
 _RESTART_TYPES = {"hb_restart", "hb_rollover"}
 
 # Buckets to render at most; dense history is downsampled down to this.

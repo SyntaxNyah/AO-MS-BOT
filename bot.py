@@ -27,7 +27,7 @@ logging.basicConfig(
 log = logging.getLogger("bot")
 
 START_TIME = datetime.now(timezone.utc)
-INTEGRITY_TYPES = {"hb_drop", "hb_jump"}
+INTEGRITY_TYPES = {"hb_drop", "hb_jump", "hb_reset"}
 SEV_COLOR = {"alert": 0xE03A3A, "low": 0xE0A53A, "info": 0x3A9DE0}
 SEV_EMOJI = {"alert": "\U0001F534", "low": "\U0001F7E1", "info": "\U0001F535"}
 

@@ -45,3 +45,8 @@ RELIABLE_GAP_FACTOR = 3  # a poll gap below interval*this is "reliable" for aler
 # is an ordinary restart -- not a fault. A few counts of headroom above the
 # 30-min window keep borderline restarts from being mistaken for tampering.
 HB_RESTART_WINDOW = 35
+# Minimum minutes since the last reading for a counter that has slammed to the
+# floor to count as a genuine restart. A real down-and-back cycle takes time
+# (the master list holds a dead entry ~30 min); a counter hitting the floor
+# faster than this never had time to actually restart -- likely a manual reset.
+HB_REAL_RESTART_MINUTES = 35
