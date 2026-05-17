@@ -109,6 +109,8 @@ def make_hb_graph(name, rows, anomalies=None):
     ax1.plot(times, hb, color="#4f9dff", linewidth=1.4)
     ax1.set_ylabel("HB counter")
     ax1.grid(True, alpha=0.3)
+    # Show the full counter value (49246) instead of matplotlib's +4.92e4 offset.
+    ax1.ticklabel_format(axis="y", style="plain", useOffset=False)
 
     drops = restarts = 0
     if anomalies:
