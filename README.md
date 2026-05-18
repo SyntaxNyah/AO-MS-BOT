@@ -416,6 +416,35 @@ your WebAO build is reachable over HTTPS, your AO servers expose a websocket
 port, and that port is published as `ws_port`/`wss_port` in your master list.
 A server that publishes neither websocket port simply gets no join link.
 
+#### Recommended: the LemmyAO fork
+
+On our own site we do not run stock upstream WebAO &mdash; we run
+**[LemmyAO](https://github.com/SyntaxNyah/LemmyAO)**, our maintained fork of
+WebAO. It is the build behind the join links you see on our dashboard, and it
+is what we recommend you host if you want the same experience.
+
+To set up your own WebAO with LemmyAO:
+
+1. **Clone the fork** and build it &mdash; follow the instructions in the
+   [LemmyAO repository](https://github.com/SyntaxNyah/LemmyAO). Like upstream
+   WebAO it produces a static browser build, so no special server runtime is
+   needed.
+2. **Host the build** anywhere that can serve static files over HTTPS
+   &mdash; GitHub Pages, nginx, Caddy, or a CDN all work. HTTPS matters: a
+   secure (`wss://`) connection will be blocked if the page itself is served
+   over plain `http://`.
+3. **Point the bot at it** by setting `WEBAO_CLIENT` to your build's
+   `client.html` path, with no scheme:
+
+   ```bash
+   WEBAO_CLIENT=ao.example.com/lemmyao/client.html
+   ```
+
+That is all the bot needs &mdash; it builds every join link against that host
+automatically. If you would rather not self-host, you can also point
+`WEBAO_CLIENT` straight at our hosted LemmyAO build, or leave it on the
+default (`webao.miku.pizza/client.html`).
+
 ### Putting it together
 
 A fully self-hosted setup is just these `.env` values pointed at your own
@@ -437,9 +466,10 @@ driven by whatever the configured `MS_URL` returns.
 
 - **AO-MS-BOT** &mdash; created and maintained by
   [@SyntaxNyah](https://github.com/SyntaxNyah).
-- **WebAO** &mdash; the browser client for Attorney Online. The "join in
-  browser" links use the WebAO fork hosted at
-  [webao.miku.pizza](https://webao.miku.pizza/), which is based on the
-  upstream [AttorneyOnline/webAO](https://github.com/AttorneyOnline/webAO)
-  project. All credit for the web client goes to its authors and that fork's
-  maintainers.
+- **WebAO** &mdash; the browser client for Attorney Online. On our site the
+  "join in browser" links use [LemmyAO](https://github.com/SyntaxNyah/LemmyAO),
+  our maintained fork of WebAO; the bot's default `WEBAO_CLIENT` falls back to
+  the fork hosted at [webao.miku.pizza](https://webao.miku.pizza/). Both are
+  based on the upstream
+  [AttorneyOnline/webAO](https://github.com/AttorneyOnline/webAO) project. All
+  credit for the web client goes to its authors and those forks' maintainers.
