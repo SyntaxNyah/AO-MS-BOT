@@ -203,17 +203,20 @@ def server_history(key, limit=None, since=None):
     return list(reversed(rows))
 
 
-def all_snapshots(since=None):
-    """Every server's snapshots oldest-first, for the all-server comparison.
+def server_stats(since=None):
+    """Per-server aggregates for the all-server comparison.
 
-    `since` is an optional ISO timestamp lower bound (inclusive).
+    Returns one row per server with snaps (snapshot count), peak and mean
+    player counts -- computed in SQL so the full snapshot table never has to
+    be loaded into memory. `since` is an optional ISO timestamp lower bound.
     """
-    q = "SELECT server_key, ts, name, players, hbcounter FROM snapshots"
+    q = ("SELECT server_key, COUNT(*) snaps, "
+         "MAX(players) peak, AVG(players) mean FROM snapshots")
     params = []
     if since is not None:
         q += " WHERE ts>=?"
         params.append(since)
-    q += " ORDER BY id"
+    q += " GROUP BY server_key"
     with _db() as c:
         return c.execute(q, params).fetchall()
 
