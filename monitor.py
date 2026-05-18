@@ -47,8 +47,19 @@ async def fetch_servers(timeout=20):
             "name": str(s.get("name") or "(unnamed)"),
             "description": str(s.get("description") or ""),
             "hbcounter": int(hb) if hb is not None else None,
+            "ws_port": _opt_port(s.get("ws_port")),
+            "wss_port": _opt_port(s.get("wss_port")),
         })
     return out
+
+
+def _opt_port(value):
+    """Parse an optional websocket port; treat missing/invalid/<=0 as absent."""
+    try:
+        port = int(value)
+    except (TypeError, ValueError):
+        return None
+    return port if port > 0 else None
 
 
 def _mk(ts, key, name, type_, severity, detail):
@@ -91,7 +102,8 @@ async def run_poll():
         was_online = existing is not None and existing["status"] == "online"
 
         if existing is None:
-            db.upsert_server(key, s["ip"], s["port"], s["name"], now_iso)
+            db.upsert_server(key, s["ip"], s["port"], s["name"], now_iso,
+                             s["ws_port"], s["wss_port"])
             anomalies.append(_mk(now_iso, key, s["name"], "new_server", "info",
                                  "New server appeared on the master list."))
         else:
@@ -102,7 +114,8 @@ async def run_poll():
                 anomalies.append(_mk(now_iso, key, s["name"], "name_change", "low",
                                      f"Renamed: '{existing['name']}' -> "
                                      f"'{s['name']}'."))
-            db.touch_server(key, s["name"], now_iso)
+            db.touch_server(key, s["name"], now_iso,
+                            s["ws_port"], s["wss_port"])
 
         if prev_snap is not None and s["hbcounter"] is not None:
             gap = (now - datetime.fromisoformat(prev_snap["ts"])).total_seconds() / 60.0

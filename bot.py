@@ -297,6 +297,13 @@ async def server_cmd(interaction: discord.Interaction, query: str):
         embed.add_field(name="Last snapshot", value=_fmt_ts(snap["ts"]))
     embed.add_field(name="First seen", value=_fmt_ts(srv["first_seen"]))
     embed.add_field(name="Last seen", value=_fmt_ts(srv["last_seen"]))
+    webao = config.webao_url(srv["ip"], srv["ws_port"], srv["wss_port"],
+                             srv["name"])
+    embed.add_field(
+        name="Join in browser",
+        value=(f"[Open in WebAO]({webao})" if webao
+               else "This server does not publish a WebAO port."),
+        inline=False)
     if anoms:
         a_lines = "\n".join(
             f"- `{_fmt_ts(a['ts'])}` {a['type']} -- {a['detail']}"

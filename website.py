@@ -87,6 +87,15 @@ def _uptime(snaps, poll_count):
     return round(min(100.0 * snaps / poll_count, 100.0), 1)
 
 
+def _webao(srv, name=None):
+    """WebAO join link for a servers-table row, or None if it has no WS port."""
+    if srv is None:
+        return None
+    return config.webao_url(
+        srv["ip"], srv["ws_port"], srv["wss_port"],
+        srv["name"] if name is None else name)
+
+
 # --------------------------------------------------------------------------
 # JSON API
 # --------------------------------------------------------------------------
@@ -103,10 +112,12 @@ async def api_overview(request):
     polls = await asyncio.to_thread(db.poll_history, since)
 
     status = {s["server_key"]: s["status"] for s in servers}
+    srv_by = {s["server_key"]: s for s in servers}
     server_list = sorted(
         ({"key": s["server_key"], "name": s["name"],
           "players": s["players"], "hb": s["hbcounter"],
-          "status": status.get(s["server_key"], "online")}
+          "status": status.get(s["server_key"], "online"),
+          "webao": _webao(srv_by.get(s["server_key"]), s["name"])}
          for s in snaps),
         key=lambda s: s["players"], reverse=True)
 
@@ -159,6 +170,7 @@ async def api_servers(request):
             "anomalies": c.get("total", 0),
             "alerts": c.get("alerts", 0),
             "bot_spikes": c.get("bot_spikes", 0),
+            "webao": _webao(s),
         })
     return web.json_response({"servers": out, "polls": poll_count,
                               "period": period})
@@ -199,6 +211,7 @@ async def api_server(request):
     sampled = _downsample(hist)
     return web.json_response({
         "server": dict(srv),
+        "webao": _webao(srv),
         "snapshot": dict(snap) if snap else None,
         "history": [{"t": r["ts"], "p": r["players"], "hb": r["hbcounter"]}
                     for r in sampled],
@@ -353,6 +366,7 @@ async def api_meta(request):
         "poll_interval": config.POLL_INTERVAL_MINUTES,
         "dead_server_days": config.DEAD_SERVER_DAYS,
         "ms_url": config.MS_URL,
+        "webao_client": config.WEBAO_CLIENT,
     })
 
 

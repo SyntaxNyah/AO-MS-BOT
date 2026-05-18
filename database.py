@@ -14,7 +14,9 @@ CREATE TABLE IF NOT EXISTS servers (
     name       TEXT,
     first_seen TEXT,
     last_seen  TEXT,
-    status     TEXT DEFAULT 'online'
+    status     TEXT DEFAULT 'online',
+    ws_port    INTEGER,
+    wss_port   INTEGER
 );
 CREATE TABLE IF NOT EXISTS snapshots (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -79,6 +81,10 @@ def _migrate(c):
     if "bot_state" not in scols:
         c.execute(
             "ALTER TABLE servers ADD COLUMN bot_state TEXT DEFAULT 'normal'")
+    if "ws_port" not in scols:
+        c.execute("ALTER TABLE servers ADD COLUMN ws_port INTEGER")
+    if "wss_port" not in scols:
+        c.execute("ALTER TABLE servers ADD COLUMN wss_port INTEGER")
 
     # Earlier builds flagged routine upward HB jumps: the master server only
     # publishes the counter every few minutes, so a +20-30 step is just
@@ -132,21 +138,26 @@ def get_server(key):
             "SELECT * FROM servers WHERE server_key=?", (key,)).fetchone()
 
 
-def upsert_server(key, ip, port, name, now):
+def upsert_server(key, ip, port, name, now, ws_port=None, wss_port=None):
     with _db() as c:
         c.execute(
-            """INSERT INTO servers (server_key, ip, port, name, first_seen, last_seen, status)
-               VALUES (?,?,?,?,?,?,'online')
+            """INSERT INTO servers
+                 (server_key, ip, port, name, first_seen, last_seen, status,
+                  ws_port, wss_port)
+               VALUES (?,?,?,?,?,?,'online',?,?)
                ON CONFLICT(server_key) DO UPDATE SET
-                 name=excluded.name, last_seen=excluded.last_seen, status='online'""",
-            (key, ip, port, name, now, now))
+                 name=excluded.name, last_seen=excluded.last_seen,
+                 status='online', ws_port=excluded.ws_port,
+                 wss_port=excluded.wss_port""",
+            (key, ip, port, name, now, now, ws_port, wss_port))
 
 
-def touch_server(key, name, now):
+def touch_server(key, name, now, ws_port=None, wss_port=None):
     with _db() as c:
         c.execute(
-            "UPDATE servers SET name=?, last_seen=?, status='online' WHERE server_key=?",
-            (name, now, key))
+            "UPDATE servers SET name=?, last_seen=?, status='online', "
+            "ws_port=?, wss_port=? WHERE server_key=?",
+            (name, now, ws_port, wss_port, key))
 
 
 def set_server_status(key, status):

@@ -23,6 +23,9 @@ bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
   counts, uptime and peak/mean stats
 - Servers are tracked by their `ip:port` address, so two servers sharing a
   display name never collide &mdash; and they can be looked up by address
+- **WebAO join links** &mdash; every server that publishes a websocket port
+  gets a one-click "join in browser" link to the WebAO client, in `/server`,
+  on the dashboard server tables and in each server's detail view
 - Optional live **web dashboard** &mdash; flip one config switch and the bot
   also serves a full browser portal: every server, every graph, player-count
   trends, daily breakdowns, server comparisons, HB-counter tampering and a
@@ -307,3 +310,32 @@ logs are also available with `journalctl -u ao-ms-bot`.
   can see and post in those channels.
 - **`/graph` says not enough history** &mdash; the bot needs at least two polls
   for that server; wait a couple of minutes.
+
+## WebAO join links
+
+Every server the bot tracks that publishes a websocket port can be joined
+straight from a browser. The bot reads the `ws_port` and `wss_port` fields
+from the master server list and builds a [WebAO](https://github.com/AttorneyOnline/webAO)
+client link:
+
+- a server with a **secure** websocket (`wss_port`) gets a
+  `https://&hellip;/client.html?&hellip;connect=wss://&hellip;` link
+- a server with only a plain websocket (`ws_port`) gets the matching
+  `http://&hellip;/client.html?&hellip;connect=ws://&hellip;` link
+- a server that publishes neither has no WebAO link (it cannot be joined in a
+  browser)
+
+The link appears in `/server`, on the dashboard's server tables (a **&#9654;
+Join** button per server) and in each server's detail view. The WebAO client
+host defaults to `webao.miku.pizza` and is configurable with `WEBAO_CLIENT`.
+
+## Credits
+
+- **AO-MS-BOT** &mdash; created and maintained by
+  [@SyntaxNyah](https://github.com/SyntaxNyah).
+- **WebAO** &mdash; the browser client for Attorney Online. The "join in
+  browser" links use the WebAO fork hosted at
+  [webao.miku.pizza](https://webao.miku.pizza/), which is based on the
+  upstream [AttorneyOnline/webAO](https://github.com/AttorneyOnline/webAO)
+  project. All credit for the web client goes to its authors and that fork's
+  maintainers.

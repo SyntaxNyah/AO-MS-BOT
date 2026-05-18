@@ -1,5 +1,7 @@
 """Configuration loaded from the environment / .env file."""
 import os
+import re
+from urllib.parse import quote
 
 from dotenv import load_dotenv
 
@@ -92,3 +94,28 @@ WEBSITE_HOST = _str("WEBSITE_HOST", "0.0.0.0")
 WEBSITE_PORT = _int("WEBSITE_PORT", 8080)
 # Shown in the dashboard header -- name it whatever you like.
 WEBSITE_TITLE = _str("WEBSITE_TITLE", "SyntaxNyah AO Dashboard")
+
+# --- WebAO join links ---
+# WebAO is the browser client for Attorney Online. A server that publishes a
+# websocket port can be joined straight from a browser, so the bot and the
+# dashboard offer a one-click "join in browser" link for every such server.
+# The scheme is stored without http(s):// -- webao_url() picks the right one.
+WEBAO_CLIENT = _str("WEBAO_CLIENT", "webao.miku.pizza/client.html")
+
+
+def webao_url(ip, ws_port=None, wss_port=None, name=""):
+    """Build a WebAO 'join this server' link, or None if it has no WS port.
+
+    A secure websocket (wss) is preferred and the WebAO client is then loaded
+    over https; a plain ws server loads the client over http. This matches
+    WebAO's own http/https redirect, avoiding a needless extra hop.
+    """
+    base = re.sub(r"^https?://", "", WEBAO_CLIENT)
+    if wss_port:
+        scheme, endpoint = "https", f"wss://{ip}:{wss_port}"
+    elif ws_port:
+        scheme, endpoint = "http", f"ws://{ip}:{ws_port}"
+    else:
+        return None
+    return (f"{scheme}://{base}?mode=join&connect={endpoint}"
+            f"&serverName={quote(name or '', safe='')}")
