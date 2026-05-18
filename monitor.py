@@ -49,6 +49,7 @@ async def _fetch_one(session, url, timeout):
             "hbcounter": int(hb) if hb is not None else None,
             "ws_port": _opt_port(s.get("ws_port")),
             "wss_port": _opt_port(s.get("wss_port")),
+            "source": url,
         })
     return out
 
@@ -131,7 +132,7 @@ async def run_poll():
 
         if existing is None:
             db.upsert_server(key, s["ip"], s["port"], s["name"], now_iso,
-                             s["ws_port"], s["wss_port"])
+                             s["ws_port"], s["wss_port"], s["source"])
             anomalies.append(_mk(now_iso, key, s["name"], "new_server", "info",
                                  "New server appeared on the master list."))
         else:
@@ -143,7 +144,7 @@ async def run_poll():
                                      f"Renamed: '{existing['name']}' -> "
                                      f"'{s['name']}'."))
             db.touch_server(key, s["name"], now_iso,
-                            s["ws_port"], s["wss_port"])
+                            s["ws_port"], s["wss_port"], s["source"])
 
         if prev_snap is not None and s["hbcounter"] is not None:
             gap = (now - datetime.fromisoformat(prev_snap["ts"])).total_seconds() / 60.0

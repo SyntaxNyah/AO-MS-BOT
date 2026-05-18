@@ -113,10 +113,15 @@ async def api_overview(request):
 
     status = {s["server_key"]: s["status"] for s in servers}
     srv_by = {s["server_key"]: s for s in servers}
+    def _source(key):
+        row = srv_by.get(key)
+        return row["source"] if row is not None else None
+
     server_list = sorted(
         ({"key": s["server_key"], "name": s["name"],
           "players": s["players"], "hb": s["hbcounter"],
           "status": status.get(s["server_key"], "online"),
+          "source": _source(s["server_key"]),
           "webao": _webao(srv_by.get(s["server_key"]), s["name"])}
          for s in snaps),
         key=lambda s: s["players"], reverse=True)
@@ -160,6 +165,7 @@ async def api_servers(request):
         snaps = st["snaps"] if st else 0
         out.append({
             "key": k, "name": s["name"], "status": s["status"],
+            "source": s["source"],
             "first_seen": s["first_seen"], "last_seen": s["last_seen"],
             "players": ls["players"] if ls else None,
             "hb": ls["hbcounter"] if ls else None,

@@ -338,7 +338,9 @@ infrastructure. It talks to two endpoints, and both are plain config values:
   `https://servers.aceattorneyonline.com/servers`). List several URLs separated
   by commas to poll **more than one master at once** &mdash; their server lists
   are merged and deduplicated by `ip:port`, and an unreachable master is skipped
-  without blacking out the others.
+  without blacking out the others. When two or more masters are configured, the
+  web dashboard shows a **Master** toggle on the Dashboard and Servers pages so
+  you can switch which master's server list you are looking at.
 - `WEBAO_CLIENT` &mdash; the WebAO client host used to build join links
   (default `webao.miku.pizza/client.html`)
 
