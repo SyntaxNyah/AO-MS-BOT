@@ -601,6 +601,151 @@ async def compare_cmd(interaction: discord.Interaction,
     await interaction.followup.send(embed=embed, files=files)
 
 
+# How many servers share one page of the /hblist overview graph.
+_HB_PER_PAGE = 6
+
+
+class HBListView(discord.ui.View):
+    """Paged HB-counter overview -- one graph page per group of servers.
+
+    The server roster and time window are held on the view; each page fetches
+    only its own servers' history so the graph stays quick no matter how many
+    servers are tracked.
+    """
+
+    def __init__(self, items, label, since):
+        super().__init__(timeout=600)
+        self.items = items                 # ordered list of (key, name)
+        self.label = label
+        self.since = since
+        self.page = 0
+        self.total_pages = max(
+            1, (len(items) + _HB_PER_PAGE - 1) // _HB_PER_PAGE)
+        self.message = None
+        self._sync_buttons()
+
+    def _sync_buttons(self):
+        for child in self.children:
+            if child.custom_id == "hb_prev":
+                child.disabled = self.page <= 0
+            elif child.custom_id == "hb_next":
+                child.disabled = self.page >= self.total_pages - 1
+
+    async def render(self):
+        """Build the embed and graph for the current page."""
+        start = self.page * _HB_PER_PAGE
+        page_items = self.items[start:start + _HB_PER_PAGE]
+        servers = []
+        for key, name in page_items:
+            rows = await asyncio.to_thread(
+                db.server_history, key, since=self.since)
+            anoms = await asyncio.to_thread(db.server_anomalies, key, 5000)
+            servers.append({"name": name, "key": key,
+                            "rows": rows, "anomalies": anoms})
+
+        img = await asyncio.to_thread(
+            graphs.make_hb_overview_graph, servers, self.label,
+            self.page + 1, self.total_pages)
+
+        lines = []
+        for s in servers:
+            latest = s["rows"][-1] if s["rows"] else None
+            hb = (latest["hbcounter"] if latest
+                  and latest["hbcounter"] is not None else "-")
+            name = discord.utils.escape_markdown(s["name"][:40])
+            lines.append(
+                f"`HB {hb}`  **{name}**  `{s['key']}`  "
+                f"-- {len(s['anomalies'])} anomaly(ies) logged")
+        embed = discord.Embed(
+            title="HB counter overview -- all servers",
+            description=(
+                f"Heartbeat tracking for every server ({self.label}).\n"
+                f"Page **{self.page + 1}/{self.total_pages}** -- "
+                f"{len(self.items)} servers total.\n\n" + "\n".join(lines)),
+            color=0x4F9DFF, timestamp=datetime.now(timezone.utc))
+        embed.set_image(url="attachment://hboverview.png")
+        embed.set_footer(text="Use the buttons to page through every server")
+        return embed, img
+
+    async def _show(self, interaction):
+        await interaction.response.defer()
+        self._sync_buttons()
+        embed, img = await self.render()
+        await interaction.edit_original_response(
+            embed=embed, attachments=[img], view=self)
+
+    @discord.ui.button(label="Prev", custom_id="hb_prev",
+                       style=discord.ButtonStyle.secondary)
+    async def prev_btn(self, interaction: discord.Interaction, button):
+        if self.page > 0:
+            self.page -= 1
+        await self._show(interaction)
+
+    @discord.ui.button(label="Next", custom_id="hb_next",
+                       style=discord.ButtonStyle.primary)
+    async def next_btn(self, interaction: discord.Interaction, button):
+        if self.page < self.total_pages - 1:
+            self.page += 1
+        await self._show(interaction)
+
+    async def on_timeout(self):
+        for child in self.children:
+            child.disabled = True
+        if self.message is not None:
+            try:
+                await self.message.edit(view=self)
+            except discord.DiscordException:
+                pass
+
+
+@bot.tree.command(
+    name="hblist",
+    description="HB-counter overview graph for every server, anomalies marked.")
+@app_commands.describe(
+    period="How far back to graph (default: all history)",
+    days="Custom: graph this many days back",
+    weeks="Custom: graph this many weeks back",
+    start_date="Graph everything since this date (YYYY-MM-DD)")
+@app_commands.choices(period=[
+    app_commands.Choice(name="Last day", value="day"),
+    app_commands.Choice(name="Last week", value="week"),
+    app_commands.Choice(name="Last month", value="month"),
+    app_commands.Choice(name="Last year", value="year"),
+    app_commands.Choice(name="All time", value="all"),
+])
+async def hblist_cmd(interaction: discord.Interaction,
+                     period: app_commands.Choice[str] = None,
+                     days: app_commands.Range[int, 1, None] = None,
+                     weeks: app_commands.Range[int, 1, None] = None,
+                     start_date: str = None):
+    await interaction.response.defer()
+    now = datetime.now(timezone.utc)
+    since, label, err = _resolve_since(now, period, days, weeks, start_date)
+    if err:
+        await interaction.followup.send(err)
+        return
+
+    servers = await asyncio.to_thread(db.all_servers)
+    if not servers:
+        await interaction.followup.send("No servers are being tracked yet.")
+        return
+
+    # Servers with the most logged anomalies come first, so the noisy ones
+    # land on the opening page.
+    counts = await asyncio.to_thread(db.anomaly_counts, since=since)
+    ordered = sorted(
+        servers,
+        key=lambda s: (counts.get(s["server_key"], {}).get("total", 0),
+                       s["name"]),
+        reverse=True)
+    items = [(s["server_key"], s["name"]) for s in ordered]
+
+    view = HBListView(items, label, since)
+    embed, img = await view.render()
+    await interaction.followup.send(embed=embed, file=img, view=view)
+    view.message = await interaction.original_response()
+
+
 @bot.tree.command(name="anomalies",
                   description="Show recently detected anomalies.")
 @app_commands.describe(count="How many to show (1-25, default 10)",

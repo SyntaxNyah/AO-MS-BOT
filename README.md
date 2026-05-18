@@ -107,6 +107,13 @@ downsamples its history into time buckets, so it stays readable whether the
 window is an hour or several years. It accepts the same time filters as
 `/playercount`.
 
+`/hblist` is the dedicated heartbeat statistician: it documents and graphs the
+HB counter of **every tracked server**, stacking one chart per server with all
+of its logged heartbeat events &mdash; drops, jumps, resets, rollovers,
+restarts and offline/return cycles &mdash; marked on the timeline. Because the
+server list keeps growing, the result is paged: **Prev / Next buttons** scroll
+through every server, six per page.
+
 ## Commands
 
 | Command | Description |
@@ -116,6 +123,7 @@ window is an hour or several years. It accepts the same time filters as
 | `/graph <query>` | Historical HB-counter and players graph for a server; `query` is part of a server name or an exact `ip:port` address |
 | `/playercount [period] [view]` | Global player-count graph: trend or daily peak/low, filterable by day/week/month/year/all time |
 | `/compare [period]` | Ultimate statistician: compare every server's player counts, uptime and peak/mean stats together |
+| `/hblist [period]` | HB-counter overview: a stacked heartbeat graph of every server with anomalies marked, paged with Prev/Next buttons |
 | `/anomalies [count] [alerts_only]` | Show recently detected anomalies |
 | `/stats` | Monitoring statistics (polls, snapshots, uptime) |
 | `/poll` | Run a master-server poll immediately |
