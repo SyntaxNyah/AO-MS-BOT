@@ -409,19 +409,46 @@ def make_compare_graph(servers, label, poll_count):
             lbl.set_horizontalalignment("right")
 
     # --- Uptime ranking ---
-    up_sorted = sorted(bar_servers, key=lambda s: s["uptime"])
-    names = [s["name"][:32] for s in up_sorted]
-    ypos = range(len(up_sorted))
-    ax2.barh(list(ypos), [s["uptime"] for s in up_sorted], color="#4f9dff")
-    ax2.set_yticks(list(ypos))
-    ax2.set_yticklabels(names, fontsize=8)
-    ax2.set_xlabel("Uptime (% of polls seen on the master list)")
-    ax2.set_title("Server uptime", fontsize=11)
-    ax2.set_xlim(0, 100)
+    # Rank this panel by the servers' own reliability, not by player counts,
+    # so a steady but quiet server is not crowded out by busy unstable ones.
+    def _uptime_color(u):
+        if u >= 90:
+            return "#2e9e5b"   # rock solid
+        if u >= 50:
+            return "#4f9dff"   # stable
+        if u >= 20:
+            return "#f0a23a"   # flaky
+        return "#e8503a"       # rarely online
+
+    up_rank = sorted(servers, key=lambda s: s["uptime"], reverse=True)[:bar_n]
+    up_sorted = sorted(up_rank, key=lambda s: s["uptime"])
+    ypos = list(range(len(up_sorted)))
+    ax2.barh(ypos, [s["uptime"] for s in up_sorted],
+             color=[_uptime_color(s["uptime"]) for s in up_sorted])
+    ax2.set_yticks(ypos)
+    ax2.set_yticklabels([s["name"][:32] for s in up_sorted], fontsize=8)
+    ax2.set_xlabel("Uptime (% of polls the server was listed)")
+    ax2.set_title("Server uptime -- most reliable servers", fontsize=11)
+    ax2.set_xlim(0, 108)
+    ax2.set_xticks([0, 20, 50, 90, 100])
+    ax2.axvline(100, color="#888888", linewidth=0.8, linestyle=":", alpha=0.7)
     ax2.grid(True, axis="x", alpha=0.3)
     for i, s in enumerate(up_sorted):
-        ax2.text(min(s["uptime"] + 1, 99), i, f"{s['uptime']:.1f}%",
-                 va="center", fontsize=7)
+        u = s["uptime"]
+        seen = round(u / 100 * poll_count)
+        txt = f"{u:.1f}%  ({seen}/{poll_count})"
+        if u >= 38:
+            ax2.text(u - 1.5, i, txt, va="center", ha="right",
+                     fontsize=7, color="white", fontweight="bold")
+        else:
+            ax2.text(u + 1.5, i, txt, va="center", ha="left", fontsize=7)
+    ax2.legend(handles=[
+        Patch(facecolor="#2e9e5b", label="rock solid (>=90%)"),
+        Patch(facecolor="#4f9dff", label="stable (50-90%)"),
+        Patch(facecolor="#f0a23a", label="flaky (20-50%)"),
+        Patch(facecolor="#e8503a", label="rarely online (<20%)"),
+    ], loc="lower right", fontsize=7, framealpha=0.9,
+        title="reliability", title_fontsize=7)
 
     # --- Peak vs mean player ranking ---
     pk_sorted = sorted(bar_servers, key=lambda s: s["peak"])
