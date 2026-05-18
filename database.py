@@ -1,9 +1,10 @@
 """SQLite storage for server snapshots, polls and detected anomalies."""
 import os
+import re
 import sqlite3
 from contextlib import contextmanager
 
-from config import DATA_DIR, DB_PATH
+from config import DATA_DIR, DB_PATH, HB_JUMP_MARGIN
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS servers (
@@ -78,6 +79,18 @@ def _migrate(c):
     if "bot_state" not in scols:
         c.execute(
             "ALTER TABLE servers ADD COLUMN bot_state TEXT DEFAULT 'normal'")
+
+    # Earlier builds flagged routine upward HB jumps: the master server only
+    # publishes the counter every few minutes, so a +20-30 step is just
+    # accumulated time, not tampering. Purge those stale sub-threshold
+    # hb_jump anomalies so they no longer show as suspicious anywhere.
+    stale = []
+    for r in c.execute("SELECT id, detail FROM anomalies WHERE type='hb_jump'"):
+        m = re.search(r"jumped \+(\d+)", r["detail"] or "")
+        if m and int(m.group(1)) <= HB_JUMP_MARGIN:
+            stale.append((r["id"],))
+    if stale:
+        c.executemany("DELETE FROM anomalies WHERE id=?", stale)
 
 
 # --- polls ---
