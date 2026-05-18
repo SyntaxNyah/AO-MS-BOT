@@ -653,9 +653,11 @@ class HBListView(discord.ui.View):
             hb = (latest["hbcounter"] if latest
                   and latest["hbcounter"] is not None else "-")
             name = discord.utils.escape_markdown(s["name"][:40])
-            lines.append(
-                f"`HB {hb}`  **{name}**  `{s['key']}`  "
-                f"-- {len(s['anomalies'])} anomaly(ies) logged")
+            sus = sum(1 for a in s["anomalies"]
+                      if a["type"] in INTEGRITY_TYPES)
+            tag = (f"  -- **{sus} SUSPICIOUS (possible tampering)**"
+                   if sus else "  -- clean")
+            lines.append(f"`HB {hb}`  **{name}**  `{s['key']}`{tag}")
         embed = discord.Embed(
             title="HB counter overview -- all servers",
             description=(
@@ -698,22 +700,70 @@ class HBListView(discord.ui.View):
                 pass
 
 
+async def _hblist_global(interaction, ordered, label, since):
+    """Render every server's HB counter on one combined graph."""
+    data = []
+    for s in ordered:
+        key = s["server_key"]
+        rows = await asyncio.to_thread(db.server_history, key, since=since)
+        anoms = await asyncio.to_thread(db.server_anomalies, key, 5000)
+        data.append({"name": s["name"], "key": key,
+                     "rows": rows, "anomalies": anoms})
+
+    img = await asyncio.to_thread(graphs.make_hb_global_graph, data, label)
+
+    sus_lines = []
+    clean = 0
+    for s in data:
+        sus = sum(1 for a in s["anomalies"] if a["type"] in INTEGRITY_TYPES)
+        if sus:
+            name = discord.utils.escape_markdown(s["name"][:40])
+            sus_lines.append(f"`{sus}x`  **{name}**  `{s['key']}`")
+        else:
+            clean += 1
+
+    desc = (f"Every server's HB counter on one graph ({label}).\n"
+            f"**{len(data)}** servers -- {clean} clean, "
+            f"{len(sus_lines)} with suspicious activity.\n\n")
+    if sus_lines:
+        desc += ("**Possible tampering detected:**\n"
+                 + "\n".join(sus_lines[:30]))
+    else:
+        desc += "No suspicious HB events -- every counter looks clean."
+    embed = discord.Embed(
+        title="HB counter -- ALL servers combined",
+        description=desc[:4000],
+        color=0xD11A2A if sus_lines else 0x2E7D32,
+        timestamp=datetime.now(timezone.utc))
+    embed.set_image(url="attachment://hbglobal.png")
+    await interaction.followup.send(embed=embed, file=img)
+
+
 @bot.tree.command(
     name="hblist",
-    description="HB-counter overview graph for every server, anomalies marked.")
+    description="HB-counter overview for every server, tampering flagged red.")
 @app_commands.describe(
+    view="Paged (a few servers per page) or Global (all on one graph)",
     period="How far back to graph (default: all history)",
     days="Custom: graph this many days back",
     weeks="Custom: graph this many weeks back",
     start_date="Graph everything since this date (YYYY-MM-DD)")
-@app_commands.choices(period=[
-    app_commands.Choice(name="Last day", value="day"),
-    app_commands.Choice(name="Last week", value="week"),
-    app_commands.Choice(name="Last month", value="month"),
-    app_commands.Choice(name="Last year", value="year"),
-    app_commands.Choice(name="All time", value="all"),
-])
+@app_commands.choices(
+    view=[
+        app_commands.Choice(name="Paged (scroll with buttons)",
+                            value="paged"),
+        app_commands.Choice(name="Global (every server on one graph)",
+                            value="global"),
+    ],
+    period=[
+        app_commands.Choice(name="Last day", value="day"),
+        app_commands.Choice(name="Last week", value="week"),
+        app_commands.Choice(name="Last month", value="month"),
+        app_commands.Choice(name="Last year", value="year"),
+        app_commands.Choice(name="All time", value="all"),
+    ])
 async def hblist_cmd(interaction: discord.Interaction,
+                     view: app_commands.Choice[str] = None,
                      period: app_commands.Choice[str] = None,
                      days: app_commands.Range[int, 1, None] = None,
                      weeks: app_commands.Range[int, 1, None] = None,
@@ -731,19 +781,23 @@ async def hblist_cmd(interaction: discord.Interaction,
         return
 
     # Servers with the most logged anomalies come first, so the noisy ones
-    # land on the opening page.
+    # land on the opening page / lead the listing.
     counts = await asyncio.to_thread(db.anomaly_counts, since=since)
     ordered = sorted(
         servers,
         key=lambda s: (counts.get(s["server_key"], {}).get("total", 0),
                        s["name"]),
         reverse=True)
-    items = [(s["server_key"], s["name"]) for s in ordered]
 
-    view = HBListView(items, label, since)
-    embed, img = await view.render()
-    await interaction.followup.send(embed=embed, file=img, view=view)
-    view.message = await interaction.original_response()
+    if view is not None and view.value == "global":
+        await _hblist_global(interaction, ordered, label, since)
+        return
+
+    items = [(s["server_key"], s["name"]) for s in ordered]
+    hb_view = HBListView(items, label, since)
+    embed, img = await hb_view.render()
+    await interaction.followup.send(embed=embed, file=img, view=hb_view)
+    hb_view.message = await interaction.original_response()
 
 
 @bot.tree.command(name="anomalies",
