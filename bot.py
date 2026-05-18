@@ -454,8 +454,9 @@ def _build_tier_roster(by_tier, label, poll_count, total):
         for s in members:
             bot = f"   bot bursts: {s['bot_spikes']}" if s["bot_spikes"] else ""
             lines.append(
-                f"  {s['uptime']:>6.1f}%  {s['name'][:40]:<40}  "
-                f"peak {s['peak']:>4}  mean {s['mean']:>6.1f}{bot}")
+                f"  {s['uptime']:>6.1f}%  {s['name'][:34]:<34}  "
+                f"{s['key']:<24}  peak {s['peak']:>4}  "
+                f"mean {s['mean']:>6.1f}{bot}")
         lines.append("")
     data = "\n".join(lines).encode("utf-8")
     return discord.File(io.BytesIO(data), filename="server_tiers.txt")
@@ -560,8 +561,8 @@ async def compare_cmd(interaction: discord.Interaction,
             name = discord.utils.escape_markdown(s["name"][:34])
             bot = f"  bot:`{s['bot_spikes']}`" if s["bot_spikes"] else ""
             sections.append(
-                f"`{s['uptime']:>5.1f}%` **{name}** -- peak `{s['peak']}` "
-                f"mean `{s['mean']:.1f}`{bot}")
+                f"`{s['uptime']:>5.1f}%` **{name}** `{s['key']}` -- "
+                f"peak `{s['peak']}` mean `{s['mean']:.1f}`{bot}")
 
     desc = header + "\n" + "\n".join(sections)
     files = [img]
