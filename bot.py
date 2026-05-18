@@ -846,6 +846,40 @@ async def stats_cmd(interaction: discord.Interaction):
     await interaction.response.send_message(embed=embed)
 
 
+@bot.tree.command(
+    name="deadservers",
+    description="List servers absent from the master list long enough to be "
+                "considered shut down.")
+async def deadservers_cmd(interaction: discord.Interaction):
+    await interaction.response.defer()
+    now = datetime.now(timezone.utc)
+    cutoff = (now - timedelta(days=config.DEAD_SERVER_DAYS)).isoformat()
+    rows = db.dead_servers(cutoff)
+    if not rows:
+        await interaction.followup.send(
+            "No dead servers -- every tracked server has appeared on the "
+            f"master list within the last {config.DEAD_SERVER_DAYS} days.")
+        return
+
+    lines = []
+    for r in rows:
+        days = (now - datetime.fromisoformat(r["last_seen"])).days
+        name = discord.utils.escape_markdown(r["name"])
+        lines.append(f"`{days:>4}d`  **{name}**  `{r['server_key']}`\n"
+                      f"    last seen {_fmt_ts(r['last_seen'])}")
+    desc = "\n".join(lines)
+    if len(desc) > 3900:
+        desc = desc[:3890] + "\n..."
+
+    embed = discord.Embed(
+        title=f"Dead servers ({len(rows)})",
+        description=desc, color=0x7A7A7A, timestamp=now)
+    embed.set_footer(
+        text=f"Shut down = absent for {config.DEAD_SERVER_DAYS}+ days  -  "
+             "history is kept; a server that returns drops off this list")
+    await interaction.followup.send(embed=embed)
+
+
 @bot.tree.command(name="poll",
                   description="Run a master-server poll right now.")
 async def poll_cmd(interaction: discord.Interaction):

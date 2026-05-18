@@ -164,6 +164,20 @@ def all_servers():
         return c.execute("SELECT * FROM servers ORDER BY name").fetchall()
 
 
+def dead_servers(cutoff_iso):
+    """Servers whose last appearance on the master list predates `cutoff_iso`.
+
+    These have not been seen for the configured dead-server window and are
+    treated as shut down. Their stored history is left untouched; a server
+    that re-pings the list has its last_seen refreshed and stops matching.
+    Returned oldest-disappearance first.
+    """
+    with _db() as c:
+        return c.execute(
+            "SELECT * FROM servers WHERE last_seen < ? ORDER BY last_seen",
+            (cutoff_iso,)).fetchall()
+
+
 def set_bot_state(key, state):
     with _db() as c:
         c.execute("UPDATE servers SET bot_state=? WHERE server_key=?",

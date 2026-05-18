@@ -25,6 +25,13 @@ INTEGRITY_CHANNEL_ID = _int("INTEGRITY_CHANNEL_ID", 0)
 MS_URL = _str("MS_URL", "https://servers.aceattorneyonline.com/servers")
 POLL_INTERVAL_MINUTES = _int("POLL_INTERVAL_MINUTES", 1)
 
+# --- Dead-server detection ---
+# A server absent from the master list for at least this many days is treated
+# as shut down and surfaces in /deadservers. Stored history is never deleted,
+# so a server that re-pings the list updates its last_seen and drops off the
+# dead list again automatically.
+DEAD_SERVER_DAYS = _int("DEAD_SERVER_DAYS", 60)
+
 # --- Storage ---
 DATA_DIR = _str("DATA_DIR", "data")
 DB_PATH = os.path.join(DATA_DIR, "ao_monitor.db")
