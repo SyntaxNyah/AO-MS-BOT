@@ -511,8 +511,10 @@ def make_compare_graph(servers, label, poll_count, global_history=None):
     ax3.legend(loc="lower right", fontsize=8)
     for i, s in enumerate(pk_sorted):
         bot = f"  {s['bot_spikes']} bot" if s["bot_spikes"] else ""
-        ax3.text(s["peak"] + 0.5, i, f"{s['peak']}{bot}",
+        ax3.text(s["peak"] + 0.5, i + 0.16, f"peak {s['peak']}{bot}",
                  va="center", fontsize=7)
+        ax3.text(s["mean"] + 0.5, i - 0.16, f"mean {s['mean']:.1f}",
+                 va="center", fontsize=7, color="#1f7a47")
 
     # --- Statistician's summary box ---
     total_peak = sum(s["peak"] for s in servers)
