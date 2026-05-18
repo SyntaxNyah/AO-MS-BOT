@@ -383,7 +383,7 @@ enough &mdash; the bot only ever does a `GET` and never writes back.
 
 ### Realistic ways to run your own
 
-1. **Run the real master server.** The official master server is open source
+1. **Run the real master server.** The official master server is not open source
    ([AttorneyOnline/master](https://github.com/AttorneyOnline/master)). Host
    it yourself, have your AO servers heartbeat to it, and set
    `MS_URL=https://your-host/servers`. This is the closest to the real thing.
