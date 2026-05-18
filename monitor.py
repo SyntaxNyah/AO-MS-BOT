@@ -178,8 +178,14 @@ async def run_poll():
                                  "Server vanished from the master list."))
 
     total_players = sum(s["players"] for s in servers)
+    # Keep each master server's counts separate so the trend never mixes them.
+    by_source = {}
+    for s in servers:
+        agg = by_source.setdefault(s["source"], {"servers": 0, "players": 0})
+        agg["servers"] += 1
+        agg["players"] += s["players"]
     db.record_poll(now_iso, ok=1, server_count=len(servers),
-                   player_count=total_players)
+                   player_count=total_players, by_source=by_source)
     for a in anomalies:
         db.add_anomaly(a)
 

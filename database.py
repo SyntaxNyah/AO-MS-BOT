@@ -36,6 +36,13 @@ CREATE TABLE IF NOT EXISTS polls (
     server_count INTEGER,
     player_count INTEGER
 );
+CREATE TABLE IF NOT EXISTS poll_sources (
+    poll_id      INTEGER,
+    source       TEXT,
+    server_count INTEGER,
+    player_count INTEGER
+);
+CREATE INDEX IF NOT EXISTS idx_pollsrc_poll ON poll_sources(poll_id);
 CREATE TABLE IF NOT EXISTS anomalies (
     id         INTEGER PRIMARY KEY AUTOINCREMENT,
     ts         TEXT,
@@ -89,6 +96,25 @@ def _migrate(c):
     if "source" not in scols:
         c.execute("ALTER TABLE servers ADD COLUMN source TEXT")
 
+    # Per-master poll breakdown is newer than the polls table. If it is empty
+    # but polls exist, backfill it once: attribute each past poll's snapshots
+    # to the master that currently lists each server (the only source we have
+    # for historical data). New polls are recorded per-master directly.
+    have_src = c.execute("SELECT COUNT(*) n FROM poll_sources").fetchone()["n"]
+    have_polls = c.execute(
+        "SELECT COUNT(*) n FROM polls WHERE ok=1").fetchone()["n"]
+    if have_src == 0 and have_polls:
+        c.execute(
+            "INSERT INTO poll_sources (poll_id, source, server_count, "
+            "                          player_count) "
+            "SELECT p.id, sv.source, COUNT(*), "
+            "       COALESCE(SUM(sn.players), 0) "
+            "FROM polls p "
+            "JOIN snapshots sn ON sn.ts = p.ts "
+            "JOIN servers sv ON sv.server_key = sn.server_key "
+            "WHERE p.ok=1 "
+            "GROUP BY p.id, sv.source")
+
     # Earlier builds flagged routine upward HB jumps: the master server only
     # publishes the counter every few minutes, so a +20-30 step is just
     # accumulated time, not tampering. Purge those stale sub-threshold
@@ -104,12 +130,20 @@ def _migrate(c):
 
 # --- polls ---
 
-def record_poll(ts, ok, server_count, player_count=0):
+def record_poll(ts, ok, server_count, player_count=0, by_source=None):
+    """Store one poll. `by_source` maps a master URL to its own
+    {"servers": n, "players": n} so the per-master trend stays separate."""
     with _db() as c:
-        c.execute(
+        cur = c.execute(
             "INSERT INTO polls (ts, ok, server_count, player_count) "
             "VALUES (?,?,?,?)",
             (ts, 1 if ok else 0, server_count, player_count))
+        if by_source:
+            c.executemany(
+                "INSERT INTO poll_sources (poll_id, source, server_count, "
+                "                          player_count) VALUES (?,?,?,?)",
+                [(cur.lastrowid, src, agg["servers"], agg["players"])
+                 for src, agg in by_source.items()])
 
 
 def poll_history(since=None):
@@ -123,6 +157,26 @@ def poll_history(since=None):
         q += " AND ts>=?"
         params.append(since)
     q += " ORDER BY id"
+    with _db() as c:
+        return c.execute(q, params).fetchall()
+
+
+def poll_source_history(since=None):
+    """Per-master player/server counts for each successful poll, oldest-first.
+
+    Returns rows of (ts, source, server_count, player_count) so the dashboard
+    can draw one trend line per master server.
+    """
+    q = ("SELECT p.ts AS ts, ps.source AS source, "
+         "       ps.server_count AS server_count, "
+         "       ps.player_count AS player_count "
+         "FROM poll_sources ps JOIN polls p ON p.id = ps.poll_id "
+         "WHERE p.ok=1")
+    params = []
+    if since is not None:
+        q += " AND p.ts>=?"
+        params.append(since)
+    q += " ORDER BY p.id"
     with _db() as c:
         return c.execute(q, params).fetchall()
 

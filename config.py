@@ -46,7 +46,10 @@ INTEGRITY_CHANNEL_ID = _int("INTEGRITY_CHANNEL_ID", 0)
 # One or more master-server list endpoints. Set MS_URL to a single URL, or to
 # several URLs separated by commas (or newlines) to poll multiple masters at
 # once -- their server lists are merged, deduplicated by ip:port.
-MS_URLS = _list("MS_URL", ["https://servers.aceattorneyonline.com/servers"])
+MS_URLS = _list("MS_URL", [
+    "https://servers.aceattorneyonline.com/servers",
+    "https://servers.umineko.online/servers",
+])
 # First configured master; kept for callers/displays that expect a single URL.
 MS_URL = MS_URLS[0]
 POLL_INTERVAL_MINUTES = _int("POLL_INTERVAL_MINUTES", 1)

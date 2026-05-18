@@ -11,9 +11,10 @@ bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
 
 - `/list` &mdash; the current server list, on demand
 - Automatic polling every minute (configurable)
-- Poll one master server or **several at once** &mdash; the lists are merged,
-  a failing master never blacks out the others, and the dashboard can filter
-  the view by master
+- Polls **two master servers by default** &mdash; the official Attorney Online
+  list and our open-source master server &mdash; or any number you configure;
+  the lists are merged, a failing master never blacks out the others, each
+  master's stats are kept separate, and the dashboard can filter by master
 - A poll summary posted to your events channel after every poll
 - Full historical database (SQLite) &mdash; every server, every poll
 - Plain-text event log (`data/events.log`) &mdash; a running notepad of everything that happened
@@ -271,6 +272,9 @@ a full dashboard with a tab for everything the bot tracks:
 - **Records** &mdash; all-time milestones: highest player count, busiest day,
   biggest server, most data collected and more
 - **Dead Servers** &mdash; servers absent long enough to be considered shut down
+- **Master Server** &mdash; about our open-source master server and how to
+  list your own AO server on it, with links to the master server and WebAO
+  source code
 
 Every chart has hover tooltips, every period can be filtered to
 day/week/month/year/all, and clicking any server anywhere opens a detail
@@ -286,16 +290,18 @@ behind a reverse proxy (nginx, Caddy) for HTTPS, or keep `WEBSITE_HOST` on
 
 ## Polling multiple master servers
 
-`MS_URL` normally points at a single master-server list, but it accepts
-**several endpoints at once**. List them separated by commas (or one per line)
-and the bot polls them all:
+`MS_URL` accepts **several endpoints at once** &mdash; list them separated by
+commas (or one per line) and the bot polls them all. **By default it polls
+two masters:** the official Attorney Online list and our open-source master
+server (`servers.umineko.online`, see
+[Setting up your own master server](#setting-up-your-own-master-server)).
 
 ```bash
-# One master (the default):
-MS_URL=https://servers.aceattorneyonline.com/servers
+# The default -- the official master plus our open-source one:
+MS_URL=https://servers.aceattorneyonline.com/servers,https://servers.umineko.online/servers
 
-# Two or more masters:
-MS_URL=https://servers.aceattorneyonline.com/servers,https://newmasterserverlist.com/servers
+# Just the official master:
+MS_URL=https://servers.aceattorneyonline.com/servers
 ```
 
 How it behaves:
@@ -311,6 +317,10 @@ How it behaves:
   *every* master fails.
 - **Each server remembers which master listed it.** This is stored so the
   dashboard can filter by master (see below).
+- **Each master's poll stats are kept separate.** Every poll records its
+  player and server counts per master, so the two never blur together &mdash;
+  the Players page draws one trend line per master alongside the combined
+  total.
 
 ### Switching masters on the dashboard
 
@@ -321,9 +331,12 @@ to swap the server list to just that master's servers; `All` shows the merged
 list. The toggle is hidden when only one master is configured, so a normal
 single-master setup is unaffected.
 
-The toggle filters the server-list views. Aggregate pages (Players, Compare,
-HB Counter, Activity, Records) still show combined data across every master,
-since those charts span the whole tracked history.
+The toggle filters the server-list views. The **Players** page additionally
+breaks its player-count and servers-online trends down per master &mdash; one
+line per master server next to the combined total &mdash; so each master's
+stats stay separate. Other aggregate pages (Compare, HB Counter, Activity,
+Records) still show combined data across every master, since those charts
+span the whole tracked history.
 
 ## Updating the bot
 
