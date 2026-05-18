@@ -10,9 +10,9 @@ fills with players over a poll or two is flagged as a suspected bot pattern.
 import statistics
 
 from config import (BOT_BASELINE_MAX, BOT_BASELINE_WINDOW, BOT_SPIKE_MAX,
-                    BOT_SPIKE_MIN, BOT_SPIKE_POLLS, HB_CAP, HB_MARGIN,
-                    HB_RATE_MAX, HB_REAL_RESTART_MINUTES, HB_RESTART_WINDOW,
-                    ROLLOVER_DROP)
+                    BOT_SPIKE_MIN, BOT_SPIKE_POLLS, HB_CAP, HB_JUMP_MARGIN,
+                    HB_MARGIN, HB_RATE_MAX, HB_REAL_RESTART_MINUTES,
+                    HB_RESTART_WINDOW, ROLLOVER_DROP)
 
 
 def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True):
@@ -30,11 +30,17 @@ def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True):
     delta = cur_hb - prev_hb
 
     if delta >= 0:
-        if delta > expected_max:
-            sev = "alert" if reliable else "info"
+        # An upward jump is not alarming. The master server only publishes the
+        # counter every few minutes, so when it finally refreshes the counter
+        # leaps by all the minutes it quietly accumulated meanwhile -- a +20-30
+        # step is routine. Only a jump well past that wide tolerance is worth
+        # noting, and even then it is never escalated to a high-severity alert.
+        jump_max = elapsed_min * HB_RATE_MAX + HB_JUMP_MARGIN
+        if delta > jump_max:
+            sev = "low" if reliable else "info"
             return ("hb_jump", sev,
                     f"HB jumped +{delta} in {elapsed_min:.1f} min "
-                    f"(expected at most +{expected_max:.0f}).")
+                    f"(expected at most +{jump_max:.0f}).")
         return None
 
     # The counter decreased: a normal rollover at HB_CAP, a fresh restart, or a

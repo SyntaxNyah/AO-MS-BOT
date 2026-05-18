@@ -38,6 +38,12 @@ HB_CAP = 50000          # counter resets when it reaches this value
 ROLLOVER_DROP = 1000    # 50000 -> 49000
 HB_RATE_MAX = 2.0       # most plausible counter gain per minute (true rate ~1/min)
 HB_MARGIN = 12          # absolute slack on top of the rate-based expectation
+# An upward jump is far less alarming than a backwards drop. The master server
+# only publishes the counter every few minutes, so when it refreshes the
+# counter leaps by all the minutes it accumulated meanwhile -- a +20-30 step is
+# routine, not tampering. Allow this much slack before an upward jump is even
+# noted (and it is never raised to a high-severity alert).
+HB_JUMP_MARGIN = 35
 RELIABLE_GAP_FACTOR = 3  # a poll gap below interval*this is "reliable" for alerting
 # The master server keeps a dead server listed for ~30 min after its last
 # heartbeat. A server taken down and brought back starts its counter from
