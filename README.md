@@ -53,7 +53,7 @@ flags:
 | `disappeared` | A server that was listed is no longer present |
 | `reappeared` | A previously missing server is back |
 | `name_change` | A tracked server changed its name |
-| `hb_jump` | The HB counter rose far faster than the ~1/minute rate allows |
+| `hb_jump` | The HB counter leapt up well beyond the slack for a normal master-server refresh &mdash; low severity, since an upward jump is rarely a fault |
 | `hb_drop` | The HB counter fell in a way a normal 50k rollover cannot explain |
 | `hb_rollover` | The HB counter wrapped normally at 50000 (informational) |
 | `hb_restart` | The HB counter reset because the server was restarted |
