@@ -433,7 +433,7 @@ def make_compare_graph(servers, label, poll_count, global_history=None):
         pts = _downsample_xy(s["history"])
         ax1.plot([t for t, _ in pts], [v for _, v in pts],
                  color=cmap(i % 20), linewidth=1.5,
-                 label=f"{s['name'][:30]}  (peak {s['peak']})")
+                 label=f"{s['name'][:26]}  {s['key']}")
     ax1.set_ylabel("Players online")
     ax1.set_title("Player count over time", fontsize=11)
     ax1.grid(True, alpha=0.3)
@@ -465,7 +465,8 @@ def make_compare_graph(servers, label, poll_count, global_history=None):
     ax2.barh(ypos, [s["uptime"] for s in up_sorted],
              color=[_uptime_color(s["uptime"]) for s in up_sorted])
     ax2.set_yticks(ypos)
-    ax2.set_yticklabels([s["name"][:32] for s in up_sorted], fontsize=8)
+    ax2.set_yticklabels(
+        [f"{s['name'][:30]}\n{s['key']}" for s in up_sorted], fontsize=7)
     ax2.set_xlabel("Uptime (% of polls the server was listed)")
     ax2.set_title("Server uptime -- most reliable servers", fontsize=11)
     ax2.set_xlim(0, 108)
@@ -491,14 +492,14 @@ def make_compare_graph(servers, label, poll_count, global_history=None):
 
     # --- Peak vs mean player ranking ---
     pk_sorted = sorted(bar_servers, key=lambda s: s["peak"])
-    names = [s["name"][:32] for s in pk_sorted]
+    names = [f"{s['name'][:30]}\n{s['key']}" for s in pk_sorted]
     ypos = range(len(pk_sorted))
     ax3.barh(list(ypos), [s["peak"] for s in pk_sorted], color="#41c97a",
              label="peak players")
     ax3.barh(list(ypos), [s["mean"] for s in pk_sorted], color="#2e9e5b",
              height=0.45, label="mean players")
     ax3.set_yticks(list(ypos))
-    ax3.set_yticklabels(names, fontsize=8)
+    ax3.set_yticklabels(names, fontsize=7)
     ax3.set_xlabel("Players")
     ax3.set_title("Peak and mean player count", fontsize=11)
     ax3.grid(True, axis="x", alpha=0.3)
