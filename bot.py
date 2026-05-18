@@ -14,6 +14,7 @@ import config
 import database as db
 import graphs
 import monitor
+import website
 
 os.makedirs(config.DATA_DIR, exist_ok=True)
 
@@ -67,6 +68,12 @@ async def setup_hook():
         await bot.tree.sync()
         log.info("slash commands synced globally (may take up to 1 hour)")
     poll_loop.start()
+
+    if config.WEBSITE_ENABLED:
+        try:
+            await website.start()
+        except Exception:
+            log.exception("could not start the web dashboard")
 
 
 @bot.event

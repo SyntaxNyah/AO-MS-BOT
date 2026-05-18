@@ -23,6 +23,9 @@ bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
   counts, uptime and peak/mean stats
 - Servers are tracked by their `ip:port` address, so two servers sharing a
   display name never collide &mdash; and they can be looked up by address
+- Optional live **web dashboard** &mdash; flip one config switch and the bot
+  also serves a browser page showing every server, the global player count,
+  anomalies and per-server history, all updating live
 
 ## How it works
 
@@ -221,6 +224,35 @@ source .venv/bin/activate && python bot.py
 ```
 
 Detach with `Ctrl+A` then `D`. Reattach later with `screen -r aobot`.
+
+## The web dashboard (optional)
+
+The bot can also run a live web dashboard &mdash; the same data the Discord
+commands show, but in a browser, with no Discord needed to look at it. It runs
+inside the same process and reads the same database, so there is nothing
+extra to start.
+
+Turn it on in your `.env`:
+
+```bash
+WEBSITE_ENABLED=1
+WEBSITE_HOST=0.0.0.0     # 0.0.0.0 = reachable from other machines; 127.0.0.1 = local only
+WEBSITE_PORT=8080
+WEBSITE_TITLE=My AO Dashboard
+```
+
+Restart the bot, then open `http://YOUR-SERVER-IP:8080` in any browser. The
+page shows:
+
+- headline stats (servers online, polls, snapshots, anomalies&hellip;)
+- the global player count as a chart, with day/week/month/year/all buttons
+- the full server list &mdash; click any server for its player and HB-counter
+  history plus its anomalies
+- a live feed of recently detected anomalies
+
+It refreshes itself every 60 seconds. If you expose it to the internet, put it
+behind a reverse proxy (nginx, Caddy) for HTTPS, or keep `WEBSITE_HOST` on
+`127.0.0.1` and tunnel in over SSH.
 
 ## Updating the bot
 
