@@ -488,7 +488,7 @@ async def compare_cmd(interaction: discord.Interaction,
         await interaction.followup.send(err)
         return
 
-    polls = db.poll_history(since=since)
+    polls = await asyncio.to_thread(db.poll_history, since=since)
     poll_count = len(polls)
     if poll_count < 2:
         await interaction.followup.send(
@@ -498,33 +498,41 @@ async def compare_cmd(interaction: discord.Interaction,
     global_history = [(datetime.fromisoformat(r["ts"]), r["player_count"])
                       for r in polls if r["player_count"] is not None]
 
-    snaps = db.all_snapshots(since=since)
-    if not snaps:
+    # Per-server aggregates are computed in SQL -- the full snapshot table is
+    # never loaded into memory, which keeps /compare fast even after years of
+    # history. Only the few servers actually plotted need their time series.
+    stats_rows = await asyncio.to_thread(db.server_stats, since=since)
+    if not stats_rows:
         await interaction.followup.send(f"No server data recorded in {label}.")
         return
-    counts = db.anomaly_counts(since=since)
-
-    grouped = {}
-    for r in snaps:
-        grouped.setdefault(r["server_key"], []).append(r)
+    counts = await asyncio.to_thread(db.anomaly_counts, since=since)
+    name_map = {s["server_key"]: s["name"] for s in db.all_servers()}
 
     servers = []
-    for key, rows in grouped.items():
-        players = [r["players"] for r in rows]
-        history = [(datetime.fromisoformat(r["ts"]), r["players"])
-                   for r in rows]
+    for r in stats_rows:
+        key = r["server_key"]
         c = counts.get(key, {})
         servers.append({
-            "name": rows[-1]["name"],
+            "name": name_map.get(key, key),
             "key": key,
-            "history": history,
-            "peak": max(players),
-            "mean": sum(players) / len(players),
-            "uptime": min(100.0 * len(rows) / poll_count, 100.0),
+            "history": [],
+            "peak": r["peak"] or 0,
+            "mean": r["mean"] or 0.0,
+            "uptime": min(100.0 * r["snaps"] / poll_count, 100.0),
             "anomalies": c.get("total", 0),
             "alerts": c.get("alerts", 0),
             "bot_spikes": c.get("bot_spikes", 0),
         })
+
+    # Only the top servers by peak appear as time-series lines, so fetch the
+    # heavier snapshot history for those alone.
+    plotted = sorted(servers, key=lambda s: (s["peak"], s["mean"]),
+                     reverse=True)[:12]
+    for s in plotted:
+        hist = await asyncio.to_thread(
+            db.server_history, s["key"], since=since)
+        s["history"] = [(datetime.fromisoformat(h["ts"]), h["players"])
+                         for h in hist]
 
     img = await asyncio.to_thread(
         graphs.make_compare_graph, servers, label, poll_count,
