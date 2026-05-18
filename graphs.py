@@ -28,6 +28,11 @@ _RESTART_TYPES = {"hb_restart"}
 _GONE_TYPES = {"disappeared"}
 _RETURN_TYPES = {"reappeared"}
 _BOT_TYPES = {"bot_spike"}
+# Heartbeat events normal operation cannot explain -- an unexplained drop, a
+# counter slammed down too fast for a real restart, or an impossible jump.
+# These are the clear signs the counter was tampered with, and are always
+# drawn in bold red.
+_SUSPICIOUS_TYPES = {"hb_drop", "hb_reset", "hb_jump"}
 
 # Buckets to render at most; dense history is downsampled down to this.
 _TARGET_POINTS = 900
@@ -538,16 +543,89 @@ def make_compare_graph(servers, label, poll_count, global_history=None):
     return discord.File(buf, filename="compare.png")
 
 
+def _mark_hb_anomalies(ax, anomalies, t0, t1, benign=True,
+                       suspicious_marker=True):
+    """Draw anomaly markers on an HB axes between t0 and t1.
+
+    Suspicious events (tampering signs) are always bold red. Benign events
+    (rollovers, genuine restarts, offline/return) are drawn faint, and only
+    when `benign` is True. Returns a counts dict.
+    """
+    c = {"suspicious": 0, "rollover": 0, "restart": 0, "gone": 0,
+         "returned": 0}
+    sus_times = []
+    for a in anomalies or []:
+        try:
+            t = _parse(a["ts"])
+        except (TypeError, ValueError):
+            continue
+        if not (t0 <= t <= t1):
+            continue
+        atype = a["type"]
+        if atype in _SUSPICIOUS_TYPES:
+            ax.axvline(t, color="#d11a2a", linewidth=2.6, alpha=0.95, zorder=5)
+            sus_times.append(t)
+            c["suspicious"] += 1
+        elif not benign:
+            continue
+        elif atype in _ROLLOVER_TYPES:
+            ax.axvline(t, color="#9b59b6", linewidth=0.8, alpha=0.35,
+                       linestyle=":")
+            c["rollover"] += 1
+        elif atype in _RESTART_TYPES:
+            ax.axvline(t, color="#8a97a3", linewidth=0.8, alpha=0.45,
+                       linestyle="--")
+            c["restart"] += 1
+        elif atype in _GONE_TYPES:
+            ax.axvline(t, color="#c2c2c2", linewidth=0.8, alpha=0.5,
+                       linestyle="--")
+            c["gone"] += 1
+        elif atype in _RETURN_TYPES:
+            ax.axvline(t, color="#41c97a", linewidth=0.9, alpha=0.55)
+            c["returned"] += 1
+    if suspicious_marker and sus_times:
+        # A red triangle pinned to the top of the panel above every
+        # suspicious event, so tampering is impossible to miss.
+        ax.plot(sus_times, [1.0] * len(sus_times),
+                transform=ax.get_xaxis_transform(), marker="v",
+                color="#d11a2a", markersize=11, linestyle="none",
+                clip_on=False, zorder=6)
+    return c
+
+
+def _flag_suspicious_panel(ax):
+    """Tint a subplot red and thicken its border -- a tampered server."""
+    ax.set_facecolor("#fceaea")
+    for spine in ax.spines.values():
+        spine.set_edgecolor("#d11a2a")
+        spine.set_linewidth(2.2)
+
+
+_HB_LEGEND = [
+    Line2D([], [], color="#4f9dff", linewidth=1.6, label="HB counter"),
+    Patch(facecolor="#4f9dff", alpha=0.20, label="min-max range"),
+    Line2D([], [], color="#d11a2a", linewidth=2.6,
+           label="SUSPICIOUS - drop / manual reset / impossible jump "
+                 "(possible tampering)"),
+    Line2D([], [], color="#9b59b6", linewidth=1.2, linestyle=":",
+           label="counter rollover (normal 50k wrap)"),
+    Line2D([], [], color="#8a97a3", linewidth=1.2, linestyle="--",
+           label="genuine server restart (benign)"),
+    Line2D([], [], color="#c2c2c2", linewidth=1.2, linestyle="--",
+           label="went offline"),
+    Line2D([], [], color="#41c97a", linewidth=1.2, label="came back online"),
+]
+
+
 def make_hb_overview_graph(servers, label, page, total_pages):
     """Stacked HB-counter charts for several servers, one row each.
 
     `servers` is a list of dicts with: name, key, rows (oldest-first snapshot
-    rows), anomalies (anomaly rows). Counter drops, jumps, resets, rollovers,
-    restarts and offline/return events are all marked on every row, so the
-    chart doubles as a log of every heartbeat event in the window.
+    rows), anomalies (anomaly rows). Every heartbeat event is marked; servers
+    showing tampering signs get a bold red panel so they stand out instantly.
     """
     n = max(len(servers), 1)
-    fig = Figure(figsize=(13, 2.8 * n + 1.4))
+    fig = Figure(figsize=(13, 2.9 * n + 1.6))
     axes = fig.subplots(n, 1, squeeze=False)[:, 0]
     fig.suptitle(
         f"Attorney Online -- HB counter overview   "
@@ -581,45 +659,24 @@ def make_hb_overview_graph(servers, label, page, total_pages):
         ax.grid(True, alpha=0.3)
         ax.ticklabel_format(axis="y", style="plain", useOffset=False)
 
-        c = {"drop": 0, "jump": 0, "rollover": 0, "restart": 0,
-             "gone": 0, "returned": 0}
-        for a in s.get("anomalies", []):
-            try:
-                t = _parse(a["ts"])
-            except (TypeError, ValueError):
-                continue
-            if not (times[0] <= t <= times[-1]):
-                continue
-            atype = a["type"]
-            if atype in _DROP_TYPES:
-                ax.axvline(t, color="#e8503a", linewidth=1.0, alpha=0.75)
-                c["drop"] += 1
-            elif atype == "hb_jump":
-                ax.axvline(t, color="#1f6f8b", linewidth=1.0, alpha=0.75)
-                c["jump"] += 1
-            elif atype in _ROLLOVER_TYPES:
-                ax.axvline(t, color="#9b59b6", linewidth=0.9, alpha=0.5,
-                           linestyle=":")
-                c["rollover"] += 1
-            elif atype in _RESTART_TYPES:
-                ax.axvline(t, color="#f0a23a", linewidth=0.9, alpha=0.55,
-                           linestyle="--")
-                c["restart"] += 1
-            elif atype in _GONE_TYPES:
-                ax.axvline(t, color="#888888", linewidth=1.0, alpha=0.6,
-                           linestyle="--")
-                c["gone"] += 1
-            elif atype in _RETURN_TYPES:
-                ax.axvline(t, color="#41c97a", linewidth=1.1, alpha=0.75)
-                c["returned"] += 1
+        c = _mark_hb_anomalies(ax, s.get("anomalies"), times[0], times[-1])
 
         cur = rows[-1]["hbcounter"]
-        info = (f"HB now {cur if cur is not None else '-'}   "
-                f"drops {c['drop']}  jumps {c['jump']}  "
-                f"rollovers {c['rollover']}  restarts {c['restart']}  "
-                f"off/back {c['gone']}/{c['returned']}")
-        ax.set_title(f"{title}\n{info}", fontsize=8.5, loc="left",
-                     family="monospace")
+        cur_txt = cur if cur is not None else "-"
+        if c["suspicious"]:
+            _flag_suspicious_panel(ax)
+            verdict = (f"   !!!  {c['suspicious']} SUSPICIOUS HB EVENT(S)  "
+                       "-- POSSIBLE TAMPERING  !!!")
+            tcolor = "#d11a2a"
+        else:
+            verdict = "   --  HB counter clean, no tampering signs"
+            tcolor = "#2e7d32"
+        benign = (f"benign:  rollovers {c['rollover']}   "
+                  f"genuine restarts {c['restart']}   "
+                  f"offline/return {c['gone']}/{c['returned']}")
+        ax.set_title(f"{title}\nHB now {cur_txt}{verdict}\n{benign}",
+                     fontsize=8.5, loc="left", family="monospace",
+                     color=tcolor, fontweight="bold")
 
         locator = mdates.AutoDateLocator(maxticks=9)
         ax.xaxis.set_major_locator(locator)
@@ -629,22 +686,93 @@ def make_hb_overview_graph(servers, label, page, total_pages):
             lbl.set_horizontalalignment("right")
 
     axes[-1].set_xlabel("Time (UTC)")
-    fig.legend(handles=[
-        Line2D([], [], color="#4f9dff", linewidth=1.6, label="HB counter"),
-        Patch(facecolor="#4f9dff", alpha=0.20, label="min-max range"),
-        Line2D([], [], color="#e8503a", linewidth=1.2, label="drop / reset"),
-        Line2D([], [], color="#1f6f8b", linewidth=1.2, label="jump"),
-        Line2D([], [], color="#9b59b6", linewidth=1.2, linestyle=":",
-               label="rollover"),
-        Line2D([], [], color="#f0a23a", linewidth=1.2, linestyle="--",
-               label="restart"),
-        Line2D([], [], color="#888888", linewidth=1.2, linestyle="--",
-               label="went offline"),
-        Line2D([], [], color="#41c97a", linewidth=1.2, label="came back"),
-    ], loc="lower center", ncol=8, fontsize=8, framealpha=0.9)
-
-    fig.tight_layout(rect=(0, 0.035, 1, 0.97))
+    fig.legend(handles=_HB_LEGEND, loc="lower center", ncol=3, fontsize=8,
+               framealpha=0.9)
+    fig.tight_layout(rect=(0, 0.05, 1, 0.97))
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
     buf.seek(0)
     return discord.File(buf, filename="hboverview.png")
+
+
+def make_hb_global_graph(servers, label):
+    """Every server's HB counter on one combined axes, tampering flagged red.
+
+    `servers` is a list of dicts with: name, key, rows, anomalies. Only the
+    suspicious (tampering) events are marked, as bold red lines, so the wall
+    of red shows at a glance when and how often counters were messed with.
+    """
+    fig = Figure(figsize=(16, 10))
+    ax = fig.subplots()
+    fig.suptitle("Attorney Online -- HB counter, ALL servers combined",
+                 fontsize=14, fontweight="bold")
+    cmap = colormaps["tab20"]
+
+    t_min = t_max = None
+    plotted = 0
+    for s in sorted(servers, key=lambda x: x["name"].lower()):
+        rows = s["rows"]
+        if len(rows) < 2:
+            continue
+        pts = _downsample(rows)
+        times = [p["ts"] for p in pts]
+        hb = [float("nan") if p["hb"] is None else float(p["hb"])
+              for p in pts]
+        ax.plot(times, hb, color=cmap(plotted % 20), linewidth=1.0,
+                alpha=0.85, label=f"{s['name'][:24]}  {s['key']}")
+        plotted += 1
+        t_min = times[0] if t_min is None else min(t_min, times[0])
+        t_max = times[-1] if t_max is None else max(t_max, times[-1])
+
+    sus_servers = []
+    total_sus = 0
+    if t_min is not None:
+        for s in servers:
+            c = _mark_hb_anomalies(ax, s.get("anomalies"), t_min, t_max,
+                                   benign=False, suspicious_marker=False)
+            if c["suspicious"]:
+                sus_servers.append((s["name"], s["key"], c["suspicious"]))
+                total_sus += c["suspicious"]
+    sus_servers.sort(key=lambda x: x[2], reverse=True)
+
+    ax.set_ylabel("HB counter")
+    ax.set_xlabel("Time (UTC)")
+    ax.grid(True, alpha=0.3)
+    ax.ticklabel_format(axis="y", style="plain", useOffset=False)
+    if plotted:
+        ax.legend(loc="upper left", fontsize=6, framealpha=0.9, ncol=3)
+        locator = mdates.AutoDateLocator(maxticks=12)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+        for lbl in ax.get_xticklabels():
+            lbl.set_rotation(20)
+            lbl.set_horizontalalignment("right")
+
+    if sus_servers:
+        listed = "\n".join(f"  {n} x  {name[:34]}  {key}"
+                           for name, key, n in sus_servers[:12])
+        more = (f"\n  ...and {len(sus_servers) - 12} more"
+                if len(sus_servers) > 12 else "")
+        summary = (f"!!!  TAMPERING DETECTED  !!!\n"
+                   f"Range: {label}\n"
+                   f"{total_sus} suspicious HB event(s) across "
+                   f"{len(sus_servers)} server(s):\n{listed}{more}")
+        box_color = "#fceaea"
+        edge = "#d11a2a"
+    else:
+        summary = (f"Range: {label}\n"
+                   f"{plotted} servers plotted.\n"
+                   "No suspicious HB events -- every counter looks clean.")
+        box_color = "#eaf6ec"
+        edge = "#2e7d32"
+    ax.text(0.99, 0.02, summary, transform=ax.transAxes,
+            ha="right", va="bottom", fontsize=8, family="monospace",
+            fontweight="bold",
+            bbox={"boxstyle": "round", "facecolor": box_color,
+                  "edgecolor": edge, "linewidth": 1.6, "alpha": 0.95})
+
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
+    buf.seek(0)
+    return discord.File(buf, filename="hbglobal.png")

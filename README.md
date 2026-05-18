@@ -108,11 +108,18 @@ window is an hour or several years. It accepts the same time filters as
 `/playercount`.
 
 `/hblist` is the dedicated heartbeat statistician: it documents and graphs the
-HB counter of **every tracked server**, stacking one chart per server with all
-of its logged heartbeat events &mdash; drops, jumps, resets, rollovers,
-restarts and offline/return cycles &mdash; marked on the timeline. Because the
-server list keeps growing, the result is paged: **Prev / Next buttons** scroll
-through every server, six per page.
+HB counter of **every tracked server**, with all of its logged heartbeat
+events marked on the timeline. **Suspicious events &mdash; an unexplained
+drop, a manual reset, or an impossible jump &mdash; are the clear signs of
+counter tampering, and are always drawn as bold red lines.** A server showing
+any of them gets a red-tinted panel and a `POSSIBLE TAMPERING` verdict, so a
+messed-with counter is impossible to miss; benign events (normal rollovers,
+genuine restarts, offline/return cycles) are drawn faint. It has two views:
+
+- **Paged** &mdash; one chart per server, six per page, scrolled with
+  **Prev / Next buttons**
+- **Global** &mdash; every server's HB counter on one combined graph, with a
+  tampering summary listing every server whose counter was messed with
 
 ## Commands
 
@@ -123,7 +130,7 @@ through every server, six per page.
 | `/graph <query>` | Historical HB-counter and players graph for a server; `query` is part of a server name or an exact `ip:port` address |
 | `/playercount [period] [view]` | Global player-count graph: trend or daily peak/low, filterable by day/week/month/year/all time |
 | `/compare [period]` | Ultimate statistician: compare every server's player counts, uptime and peak/mean stats together |
-| `/hblist [period]` | HB-counter overview: a stacked heartbeat graph of every server with anomalies marked, paged with Prev/Next buttons |
+| `/hblist [view] [period]` | HB-counter overview for every server with tampering flagged in bold red; `view` is paged (Prev/Next buttons) or global (all servers on one graph) |
 | `/anomalies [count] [alerts_only]` | Show recently detected anomalies |
 | `/stats` | Monitoring statistics (polls, snapshots, uptime) |
 | `/poll` | Run a master-server poll immediately |
