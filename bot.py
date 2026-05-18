@@ -28,6 +28,7 @@ log = logging.getLogger("bot")
 
 START_TIME = datetime.now(timezone.utc)
 INTEGRITY_TYPES = {"hb_drop", "hb_jump", "hb_reset"}
+BOT_TYPES = {"bot_spike", "bot_spike_end"}
 SEV_COLOR = {"alert": 0xE03A3A, "low": 0xE0A53A, "info": 0x3A9DE0}
 SEV_EMOJI = {"alert": "\U0001F534", "low": "\U0001F7E1", "info": "\U0001F535"}
 
@@ -147,13 +148,22 @@ async def post_poll_summary(summary):
 async def dispatch_alert(a):
     """Send an anomaly to the appropriate Discord channel."""
     integrity = a["type"] in INTEGRITY_TYPES
-    primary = config.INTEGRITY_CHANNEL_ID if integrity else config.EVENTS_CHANNEL_ID
+    is_bot = a["type"] in BOT_TYPES
+    # HB-counter faults and bot bursts are routed to the integrity channel.
+    important = integrity or a["type"] == "bot_spike"
+    primary = (config.INTEGRITY_CHANNEL_ID if important
+               else config.EVENTS_CHANNEL_ID)
     channel = await resolve_channel(
         primary or config.EVENTS_CHANNEL_ID or config.INTEGRITY_CHANNEL_ID)
     if channel is None:
         return
 
-    title = "HB counter anomaly" if integrity else "Server event"
+    if integrity:
+        title = "HB counter anomaly"
+    elif is_bot:
+        title = "Suspected bot pattern"
+    else:
+        title = "Server event"
     embed = discord.Embed(
         title=f"{title}: {a['type']}",
         description=a["detail"],
@@ -164,7 +174,8 @@ async def dispatch_alert(a):
     embed.add_field(name="Address", value=f"`{a['server_key']}`", inline=True)
     embed.add_field(name="Severity", value=a["severity"].upper(), inline=True)
 
-    content = "@here" if (integrity and a["severity"] == "alert") else None
+    content = ("@here" if (important and a["severity"] == "alert")
+               else None)
     try:
         await channel.send(
             content=content, embed=embed,
@@ -416,6 +427,93 @@ async def playercount_cmd(interaction: discord.Interaction,
     await interaction.followup.send(embed=embed, file=img)
 
 
+@bot.tree.command(
+    name="compare",
+    description="Ultimate statistician: compare every server's stats together.")
+@app_commands.describe(
+    period="How far back to compare (default: all history)",
+    days="Custom: compare this many days back",
+    weeks="Custom: compare this many weeks back",
+    start_date="Compare everything since this date (YYYY-MM-DD)")
+@app_commands.choices(period=[
+    app_commands.Choice(name="Last day", value="day"),
+    app_commands.Choice(name="Last week", value="week"),
+    app_commands.Choice(name="Last month", value="month"),
+    app_commands.Choice(name="Last year", value="year"),
+    app_commands.Choice(name="All time", value="all"),
+])
+async def compare_cmd(interaction: discord.Interaction,
+                      period: app_commands.Choice[str] = None,
+                      days: app_commands.Range[int, 1, None] = None,
+                      weeks: app_commands.Range[int, 1, None] = None,
+                      start_date: str = None):
+    await interaction.response.defer()
+    now = datetime.now(timezone.utc)
+    since, label, err = _resolve_since(now, period, days, weeks, start_date)
+    if err:
+        await interaction.followup.send(err)
+        return
+
+    poll_count = len(db.poll_history(since=since))
+    if poll_count < 2:
+        await interaction.followup.send(
+            f"Not enough poll history in {label} -- need at least 2 polls.")
+        return
+
+    snaps = db.all_snapshots(since=since)
+    if not snaps:
+        await interaction.followup.send(f"No server data recorded in {label}.")
+        return
+    counts = db.anomaly_counts(since=since)
+
+    grouped = {}
+    for r in snaps:
+        grouped.setdefault(r["server_key"], []).append(r)
+
+    servers = []
+    for key, rows in grouped.items():
+        players = [r["players"] for r in rows]
+        history = [(datetime.fromisoformat(r["ts"]), r["players"])
+                   for r in rows]
+        c = counts.get(key, {})
+        servers.append({
+            "name": rows[-1]["name"],
+            "key": key,
+            "history": history,
+            "peak": max(players),
+            "mean": sum(players) / len(players),
+            "uptime": min(100.0 * len(rows) / poll_count, 100.0),
+            "anomalies": c.get("total", 0),
+            "alerts": c.get("alerts", 0),
+            "bot_spikes": c.get("bot_spikes", 0),
+        })
+
+    img = await asyncio.to_thread(
+        graphs.make_compare_graph, servers, label, poll_count)
+
+    ranked = sorted(servers, key=lambda s: (s["peak"], s["mean"]),
+                    reverse=True)
+    lines = []
+    for i, s in enumerate(ranked[:20], 1):
+        name = discord.utils.escape_markdown(s["name"][:34])
+        bot = f"  bot:`{s['bot_spikes']}`" if s["bot_spikes"] else ""
+        lines.append(
+            f"`{i:>2}` **{name}** -- peak `{s['peak']}` "
+            f"mean `{s['mean']:.1f}` uptime `{s['uptime']:.0f}%`{bot}")
+    desc = (f"`{poll_count}` polls compared across `{len(servers)}` "
+            f"servers ({label}).\n\n" + "\n".join(lines))
+    if len(desc) > 4000:
+        desc = desc[:3990] + "\n..."
+
+    embed = discord.Embed(
+        title="Ultimate server comparison",
+        description=desc, color=0x9B59B6,
+        timestamp=datetime.now(timezone.utc))
+    embed.set_image(url="attachment://compare.png")
+    embed.set_footer(text="Ranked by peak players  -  bot: suspected bot bursts")
+    await interaction.followup.send(embed=embed, file=img)
+
+
 @bot.tree.command(name="anomalies",
                   description="Show recently detected anomalies.")
 @app_commands.describe(count="How many to show (1-25, default 10)",
@@ -454,6 +552,7 @@ async def stats_cmd(interaction: discord.Interaction):
     embed.add_field(name="Online now", value=str(s["online"]))
     embed.add_field(name="Anomalies logged",
                     value=f"{s['anomalies']} ({s['alerts']} alerts)")
+    embed.add_field(name="Suspected bot bursts", value=str(s["bot_spikes"]))
     embed.add_field(name="Last poll", value=_fmt_ts(s["last_poll"]),
                     inline=False)
     embed.add_field(name="Bot uptime", value=uptime, inline=False)

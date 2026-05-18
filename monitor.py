@@ -5,8 +5,9 @@ from datetime import datetime, timezone
 import aiohttp
 
 import database as db
-from anomaly import analyze_hb
-from config import MS_URL, POLL_INTERVAL_MINUTES, RELIABLE_GAP_FACTOR
+from anomaly import analyze_hb, analyze_players
+from config import (BOT_BASELINE_WINDOW, MS_URL, POLL_INTERVAL_MINUTES,
+                    RELIABLE_GAP_FACTOR)
 
 log = logging.getLogger("monitor")
 
@@ -110,6 +111,19 @@ async def run_poll():
                                 reliable=reliable)
             if result:
                 anomalies.append(_mk(now_iso, key, s["name"], *result))
+
+        # Player-count / bot-pattern check: a near-empty server filling up over
+        # a poll or two looks like an automated bot fill.
+        if existing is not None:
+            recent = [r["players"] for r in db.server_history(
+                key, limit=BOT_BASELINE_WINDOW + 4)]
+            prev_state = existing["bot_state"] or "normal"
+            new_state, p_result = analyze_players(
+                recent, s["players"], prev_state)
+            if new_state != prev_state:
+                db.set_bot_state(key, new_state)
+            if p_result:
+                anomalies.append(_mk(now_iso, key, s["name"], *p_result))
 
         db.add_snapshot(key, now_iso, s["name"], s["players"], s["hbcounter"])
 
