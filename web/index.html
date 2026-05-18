@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>AO-MS-BOT Dashboard</title>
+<title>SyntaxNyah AO Dashboard</title>
 <style>
   :root {
     --bg:#0d1117; --panel:#161b25; --panel2:#1c2230; --line:#2a3140;
@@ -159,7 +159,7 @@
 </head>
 <body>
 <header><div class="wrap">
-  <h1 id="title">AO-MS-BOT Dashboard</h1>
+  <h1 id="title">SyntaxNyah AO Dashboard</h1>
   <p><span class="live"></span>Live Attorney Online master-server data
      &mdash; <span id="updated">loading&hellip;</span></p>
   <nav id="nav"></nav>
@@ -177,7 +177,9 @@ const TABS = [
   ["dashboard","Dashboard"], ["servers","Servers"], ["players","Players"],
   ["activity","Activity"], ["compare","Compare"], ["hb","HB Counter"],
   ["anomalies","Anomalies"], ["records","Records"], ["dead","Dead Servers"],
+  ["credits","Credits"],
 ];
+const REPO_URL="https://github.com/SyntaxNyah/AO-MS-BOT";
 const PERIODS = [["day","Day"],["week","Week"],["month","Month"],
                  ["year","Year"],["all","All time"]];
 const SEV = {alert:"var(--red)", high:"var(--red)", low:"var(--orange)",
@@ -1004,11 +1006,63 @@ async function openServer(key){
   else d.anomalies.forEach(a=>sheet.appendChild(anomItem(a,false)));
 }
 
+// ---- tab: credits --------------------------------------------------------
+async function renderCredits(view){
+  const c=card("Source code & credits");
+  const intro=el("p",null,
+    "This is the SyntaxNyah AO Dashboard — the live web view for the "+
+    "AO-MS-BOT (the Attorney Online master-server monitoring bot). "+
+    "It is free and open source.");
+  intro.style.color="var(--dim)";
+  intro.style.fontSize="13px";
+  intro.style.marginBottom="14px";
+  c.appendChild(intro);
+
+  const g=el("div","recgrid");
+  function add(label,valNode,sub){
+    const r=el("div","rec");
+    r.appendChild(el("div","rl",label));
+    const v=el("div","rv");
+    if(valNode instanceof Node) v.appendChild(valNode); else v.textContent=valNode;
+    v.style.fontSize="17px";
+    v.style.wordBreak="break-word";
+    r.appendChild(v);
+    if(sub) r.appendChild(el("div","rs",sub));
+    g.appendChild(r);
+  }
+  const repoLink=el("a",null,"github.com/SyntaxNyah/AO-MS-BOT");
+  repoLink.href=REPO_URL;
+  repoLink.target="_blank";
+  repoLink.rel="noopener";
+  add("Source code",repoLink,"full project on GitHub");
+
+  const authorLink=el("a",null,"@SyntaxNyah");
+  authorLink.href="https://github.com/SyntaxNyah";
+  authorLink.target="_blank";
+  authorLink.rel="noopener";
+  add("Author",authorLink,"created & maintained by");
+
+  add("The MS Bot","AO-MS-BOT",
+    "Attorney Online master-server monitor — polls every server, "+
+    "tracks players, heartbeats & anomalies, and powers this dashboard");
+  c.appendChild(g);
+
+  const cta=el("p");
+  const btn=el("a","expbtn","↗ View source on GitHub");
+  btn.href=REPO_URL;
+  btn.target="_blank";
+  btn.rel="noopener";
+  cta.style.marginTop="16px";
+  cta.appendChild(btn);
+  c.appendChild(cta);
+  view.appendChild(c);
+}
+
 // ---- router --------------------------------------------------------------
 const RENDERERS={dashboard:renderDashboard,servers:renderServers,
   players:renderPlayers,activity:renderActivity,compare:renderCompare,
   hb:renderHB,anomalies:renderAnomalies,records:renderRecords,
-  dead:renderDead};
+  dead:renderDead,credits:renderCredits};
 
 function buildNav(){
   const nav=document.getElementById("nav");
