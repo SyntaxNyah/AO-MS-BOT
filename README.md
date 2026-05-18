@@ -97,9 +97,15 @@ A summary box on the chart counts the rollovers, restarts, drops,
 offline/return cycles and suspected bot bursts over the graphed span.
 
 `/compare` is the "Ultimate statistician" view: it compares **every server
-ever tracked** against one another in a single chart &mdash; player counts over
-time, server uptime, and peak/mean player ranking &mdash; plus a ranked
-leaderboard in the embed. It accepts the same time filters as `/playercount`.
+ever tracked** against one another in a single chart &mdash; the global
+Attorney Online player count, per-server player counts over time, server
+uptime, and peak/mean player ranking. **Every server is sorted into a
+reliability tier** (rock solid / stable / flaky / rarely online) and listed in
+the embed, so no server is left unranked; if there are too many servers to fit
+in the embed, the full roster is attached as `server_tiers.txt`. The chart
+downsamples its history into time buckets, so it stays readable whether the
+window is an hour or several years. It accepts the same time filters as
+`/playercount`.
 
 ## Commands
 

@@ -1,5 +1,6 @@
 """AO-MS-BOT -- Attorney Online master server monitor and historical tracker."""
 import asyncio
+import io
 import logging
 import os
 import sys
@@ -427,6 +428,39 @@ async def playercount_cmd(interaction: discord.Interaction,
     await interaction.followup.send(embed=embed, file=img)
 
 
+# Reliability tiers for /compare -- every server falls into exactly one,
+# matched first-to-last so the boundary values land in the higher tier.
+_RELIABILITY_TIERS = [
+    ("Rock solid (>=90%)", 90.0, 100.0),
+    ("Stable (50-90%)", 50.0, 90.0),
+    ("Flaky (20-50%)", 20.0, 50.0),
+    ("Rarely online (<20%)", 0.0, 20.0),
+]
+
+
+def _build_tier_roster(by_tier, label, poll_count, total):
+    """Render the full per-server reliability roster as a plain-text file."""
+    lines = [
+        "Attorney Online -- Ultimate server comparison",
+        "All-server reliability tiers",
+        f"Range: {label}",
+        f"{poll_count} polls compared across {total} servers.",
+        "",
+    ]
+    for tname, _, _ in _RELIABILITY_TIERS:
+        members = sorted(by_tier[tname],
+                         key=lambda s: (s["uptime"], s["peak"]), reverse=True)
+        lines.append(f"== {tname} -- {len(members)} server(s) ==")
+        for s in members:
+            bot = f"   bot bursts: {s['bot_spikes']}" if s["bot_spikes"] else ""
+            lines.append(
+                f"  {s['uptime']:>6.1f}%  {s['name'][:40]:<40}  "
+                f"peak {s['peak']:>4}  mean {s['mean']:>6.1f}{bot}")
+        lines.append("")
+    data = "\n".join(lines).encode("utf-8")
+    return discord.File(io.BytesIO(data), filename="server_tiers.txt")
+
+
 @bot.tree.command(
     name="compare",
     description="Ultimate statistician: compare every server's stats together.")
@@ -454,11 +488,15 @@ async def compare_cmd(interaction: discord.Interaction,
         await interaction.followup.send(err)
         return
 
-    poll_count = len(db.poll_history(since=since))
+    polls = db.poll_history(since=since)
+    poll_count = len(polls)
     if poll_count < 2:
         await interaction.followup.send(
             f"Not enough poll history in {label} -- need at least 2 polls.")
         return
+
+    global_history = [(datetime.fromisoformat(r["ts"]), r["player_count"])
+                      for r in polls if r["player_count"] is not None]
 
     snaps = db.all_snapshots(since=since)
     if not snaps:
@@ -489,29 +527,55 @@ async def compare_cmd(interaction: discord.Interaction,
         })
 
     img = await asyncio.to_thread(
-        graphs.make_compare_graph, servers, label, poll_count)
+        graphs.make_compare_graph, servers, label, poll_count,
+        global_history)
 
-    ranked = sorted(servers, key=lambda s: (s["peak"], s["mean"]),
-                    reverse=True)
-    lines = []
-    for i, s in enumerate(ranked[:20], 1):
-        name = discord.utils.escape_markdown(s["name"][:34])
-        bot = f"  bot:`{s['bot_spikes']}`" if s["bot_spikes"] else ""
-        lines.append(
-            f"`{i:>2}` **{name}** -- peak `{s['peak']}` "
-            f"mean `{s['mean']:.1f}` uptime `{s['uptime']:.0f}%`{bot}")
-    desc = (f"`{poll_count}` polls compared across `{len(servers)}` "
-            f"servers ({label}).\n\n" + "\n".join(lines))
+    # Group every server into a reliability tier so none is left unranked,
+    # then list them tier by tier (busiest first within each tier).
+    by_tier = {name: [] for name, _ in _RELIABILITY_TIERS}
+    for s in servers:
+        for tname, lo, hi in _RELIABILITY_TIERS:
+            if lo <= s["uptime"] <= hi:
+                by_tier[tname].append(s)
+                break
+
+    header = (f"`{poll_count}` polls compared across `{len(servers)}` "
+              f"servers ({label}). Every server is grouped into a "
+              "reliability tier below.")
+
+    sections = []
+    for tname, _, _ in _RELIABILITY_TIERS:
+        members = sorted(by_tier[tname], key=lambda s: (s["uptime"], s["peak"]),
+                         reverse=True)
+        sections.append(f"\n__{tname}__ -- {len(members)} server(s)")
+        for s in members:
+            name = discord.utils.escape_markdown(s["name"][:34])
+            bot = f"  bot:`{s['bot_spikes']}`" if s["bot_spikes"] else ""
+            sections.append(
+                f"`{s['uptime']:>5.1f}%` **{name}** -- peak `{s['peak']}` "
+                f"mean `{s['mean']:.1f}`{bot}")
+
+    desc = header + "\n" + "\n".join(sections)
+    files = [img]
     if len(desc) > 4000:
-        desc = desc[:3990] + "\n..."
+        # Too many servers for one embed -- attach the full roster as a file
+        # so every server is still listed somewhere.
+        counts = "  |  ".join(
+            f"{tname.split(' (')[0]}: {len(by_tier[tname])}"
+            for tname, _, _ in _RELIABILITY_TIERS)
+        desc = header + "\n\n" + counts + ("\n\nFull per-server roster "
+               "attached as `server_tiers.txt`.")
+        files.append(_build_tier_roster(by_tier, label, poll_count,
+                                        len(servers)))
 
     embed = discord.Embed(
         title="Ultimate server comparison",
         description=desc, color=0x9B59B6,
         timestamp=datetime.now(timezone.utc))
     embed.set_image(url="attachment://compare.png")
-    embed.set_footer(text="Ranked by peak players  -  bot: suspected bot bursts")
-    await interaction.followup.send(embed=embed, file=img)
+    embed.set_footer(
+        text="Tiered by uptime  -  bot: suspected bot bursts")
+    await interaction.followup.send(embed=embed, files=files)
 
 
 @bot.tree.command(name="anomalies",

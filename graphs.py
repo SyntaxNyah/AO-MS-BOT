@@ -365,12 +365,14 @@ def _downsample_xy(pts, target=_TARGET_POINTS):
     return out
 
 
-def make_compare_graph(servers, label, poll_count):
+def make_compare_graph(servers, label, poll_count, global_history=None):
     """Build the all-server "Ultimate statistician" comparison PNG.
 
     `servers` is a list of dicts, each with: name, key, history (oldest-first
     list of (datetime, players)), uptime (0-100), peak, mean, anomalies,
     alerts, bot_spikes. `poll_count` is the number of polls in the window.
+    `global_history` is an optional oldest-first list of (datetime, count) for
+    the combined Attorney Online player count, drawn as a top panel.
     """
     ranked = sorted(servers, key=lambda s: (s["peak"], s["mean"]), reverse=True)
     line_n = min(12, len(ranked))
@@ -379,13 +381,50 @@ def make_compare_graph(servers, label, poll_count):
                           key=lambda s: s["mean"], reverse=True)
     bar_servers = ranked[:bar_n]
 
-    fig = Figure(figsize=(15, 16))
-    ax1, ax2, ax3 = fig.subplots(
-        3, 1, gridspec_kw={"height_ratios": [3, 2, 2]})
+    has_global = bool(global_history) and len(global_history) >= 2
+    if has_global:
+        fig = Figure(figsize=(15, 20))
+        ax0, ax1, ax2, ax3 = fig.subplots(
+            4, 1, gridspec_kw={"height_ratios": [2, 3, 2, 2]})
+    else:
+        fig = Figure(figsize=(15, 16))
+        ax0 = None
+        ax1, ax2, ax3 = fig.subplots(
+            3, 1, gridspec_kw={"height_ratios": [3, 2, 2]})
     fig.suptitle("Attorney Online -- Ultimate server comparison",
                  fontsize=15, fontweight="bold")
 
     cmap = colormaps["tab20"]
+
+    # --- Global player count (all servers combined) ---
+    if ax0 is not None:
+        gpts = _downsample_xy(global_history)
+        gt = [t for t, _ in gpts]
+        gv = [v for _, v in gpts]
+        gpk_t, gpk_v = max(global_history, key=lambda x: x[1])
+        glo_t, glo_v = min(global_history, key=lambda x: x[1])
+        gmean = sum(v for _, v in global_history) / len(global_history)
+        ax0.fill_between(gt, 0, gv, color="#9b59b6", alpha=0.16, linewidth=0)
+        ax0.plot(gt, gv, color="#7d3c98", linewidth=2.0,
+                 label="global players online")
+        ax0.plot([gpk_t], [gpk_v], marker="^", color="#7d3c98", markersize=11,
+                 linestyle="none", label=f"peak {gpk_v}")
+        ax0.plot([glo_t], [glo_v], marker="v", color="#e8503a", markersize=11,
+                 linestyle="none", label=f"lowest {glo_v}")
+        ax0.axhline(gmean, color="#4f9dff", linewidth=1.0, linestyle=":",
+                    alpha=0.8, label=f"mean {gmean:.1f}")
+        ax0.set_ylabel("Players online")
+        ax0.set_title("Global player count -- all servers combined",
+                      fontsize=11)
+        ax0.grid(True, alpha=0.3)
+        ax0.set_ylim(bottom=0)
+        ax0.legend(loc="upper left", fontsize=8, framealpha=0.9, ncol=2)
+        glocator = mdates.AutoDateLocator(maxticks=12)
+        ax0.xaxis.set_major_locator(glocator)
+        ax0.xaxis.set_major_formatter(mdates.ConciseDateFormatter(glocator))
+        for lbl in ax0.get_xticklabels():
+            lbl.set_rotation(20)
+            lbl.set_horizontalalignment("right")
 
     # --- Player counts over time, one line per server ---
     for i, s in enumerate(line_servers):
@@ -409,19 +448,46 @@ def make_compare_graph(servers, label, poll_count):
             lbl.set_horizontalalignment("right")
 
     # --- Uptime ranking ---
-    up_sorted = sorted(bar_servers, key=lambda s: s["uptime"])
-    names = [s["name"][:32] for s in up_sorted]
-    ypos = range(len(up_sorted))
-    ax2.barh(list(ypos), [s["uptime"] for s in up_sorted], color="#4f9dff")
-    ax2.set_yticks(list(ypos))
-    ax2.set_yticklabels(names, fontsize=8)
-    ax2.set_xlabel("Uptime (% of polls seen on the master list)")
-    ax2.set_title("Server uptime", fontsize=11)
-    ax2.set_xlim(0, 100)
+    # Rank this panel by the servers' own reliability, not by player counts,
+    # so a steady but quiet server is not crowded out by busy unstable ones.
+    def _uptime_color(u):
+        if u >= 90:
+            return "#2e9e5b"   # rock solid
+        if u >= 50:
+            return "#4f9dff"   # stable
+        if u >= 20:
+            return "#f0a23a"   # flaky
+        return "#e8503a"       # rarely online
+
+    up_rank = sorted(servers, key=lambda s: s["uptime"], reverse=True)[:bar_n]
+    up_sorted = sorted(up_rank, key=lambda s: s["uptime"])
+    ypos = list(range(len(up_sorted)))
+    ax2.barh(ypos, [s["uptime"] for s in up_sorted],
+             color=[_uptime_color(s["uptime"]) for s in up_sorted])
+    ax2.set_yticks(ypos)
+    ax2.set_yticklabels([s["name"][:32] for s in up_sorted], fontsize=8)
+    ax2.set_xlabel("Uptime (% of polls the server was listed)")
+    ax2.set_title("Server uptime -- most reliable servers", fontsize=11)
+    ax2.set_xlim(0, 108)
+    ax2.set_xticks([0, 20, 50, 90, 100])
+    ax2.axvline(100, color="#888888", linewidth=0.8, linestyle=":", alpha=0.7)
     ax2.grid(True, axis="x", alpha=0.3)
     for i, s in enumerate(up_sorted):
-        ax2.text(min(s["uptime"] + 1, 99), i, f"{s['uptime']:.1f}%",
-                 va="center", fontsize=7)
+        u = s["uptime"]
+        seen = round(u / 100 * poll_count)
+        txt = f"{u:.1f}%  ({seen}/{poll_count})"
+        if u >= 38:
+            ax2.text(u - 1.5, i, txt, va="center", ha="right",
+                     fontsize=7, color="white", fontweight="bold")
+        else:
+            ax2.text(u + 1.5, i, txt, va="center", ha="left", fontsize=7)
+    ax2.legend(handles=[
+        Patch(facecolor="#2e9e5b", label="rock solid (>=90%)"),
+        Patch(facecolor="#4f9dff", label="stable (50-90%)"),
+        Patch(facecolor="#f0a23a", label="flaky (20-50%)"),
+        Patch(facecolor="#e8503a", label="rarely online (<20%)"),
+    ], loc="lower right", fontsize=7, framealpha=0.9,
+        title="reliability", title_fontsize=7)
 
     # --- Peak vs mean player ranking ---
     pk_sorted = sorted(bar_servers, key=lambda s: s["peak"])
@@ -450,8 +516,10 @@ def make_compare_graph(servers, label, poll_count):
     most_reliable = max(servers, key=lambda s: s["uptime"]) if servers else None
     summary = (f"Range:   {label}\n"
                f"Polls:   {poll_count}\n"
-               f"Servers compared: {len(servers)}\n"
-               f"Combined peak players: {total_peak}\n"
+               f"Servers compared: {len(servers)}\n" +
+               (f"Global peak players: "
+                f"{max(v for _, v in global_history)}\n" if has_global else "") +
+               f"Combined per-server peak: {total_peak}\n"
                f"Anomalies: {total_anom}   Bot bursts: {total_spikes}\n" +
                (f"Busiest: {busiest['name'][:34]} (peak {busiest['peak']})\n"
                 if busiest else "") +
@@ -462,7 +530,7 @@ def make_compare_graph(servers, label, poll_count):
              bbox={"boxstyle": "round", "facecolor": "#f4f4f4",
                    "edgecolor": "#cccccc", "alpha": 0.9})
 
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.tight_layout(rect=(0, 0, 1, 0.98))
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
     buf.seek(0)
