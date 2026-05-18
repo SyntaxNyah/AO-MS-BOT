@@ -24,8 +24,9 @@ bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
 - Servers are tracked by their `ip:port` address, so two servers sharing a
   display name never collide &mdash; and they can be looked up by address
 - Optional live **web dashboard** &mdash; flip one config switch and the bot
-  also serves a browser page showing every server, the global player count,
-  anomalies and per-server history, all updating live
+  also serves a full browser portal: every server, every graph, player-count
+  trends, daily breakdowns, server comparisons, HB-counter tampering and a
+  filterable anomaly browser, all updating live
 
 ## How it works
 
@@ -241,14 +242,29 @@ WEBSITE_PORT=8080
 WEBSITE_TITLE=My AO Dashboard
 ```
 
-Restart the bot, then open `http://YOUR-SERVER-IP:8080` in any browser. The
-page shows:
+Restart the bot, then open `http://YOUR-SERVER-IP:8080` in any browser. It is
+a full dashboard with a tab for everything the bot tracks:
 
-- headline stats (servers online, polls, snapshots, anomalies&hellip;)
-- the global player count as a chart, with day/week/month/year/all buttons
-- the full server list &mdash; click any server for its player and HB-counter
-  history plus its anomalies
-- a live feed of recently detected anomalies
+- **Dashboard** &mdash; headline stats, the global player-count chart and a
+  live anomaly feed
+- **Servers** &mdash; every server ever tracked in one searchable, sortable
+  table (players, peak, mean, uptime %, snapshots, anomalies&hellip;), plus a
+  top-15 peak-players ranking
+- **Players** &mdash; the global player count as a continuous trend *and* a
+  per-day peak/average/low breakdown, for both players and servers online
+- **Compare** &mdash; the busiest servers' player counts overlaid on one
+  graph, reliability tiers, and an uptime ranking
+- **HB Counter** &mdash; every server's heartbeat counter on one graph with
+  suspected tampering flagged red, plus a per-server status table
+- **Anomalies** &mdash; a filterable browser (by type, severity and time
+  range) with an anomalies-by-type chart
+- **Dead Servers** &mdash; servers absent long enough to be considered shut down
+
+Every chart has hover tooltips, every period can be filtered to
+day/week/month/year/all, and clicking any server anywhere opens a detail
+view with its player history, HB-counter history, daily breakdown and
+anomalies. The dashboard is strictly read-only &mdash; it never polls or
+posts anything.
 
 It refreshes itself every 60 seconds. If you expose it to the internet, put it
 behind a reverse proxy (nginx, Caddy) for HTTPS, or keep `WEBSITE_HOST` on

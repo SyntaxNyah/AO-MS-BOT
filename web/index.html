@@ -1,0 +1,819 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AO-MS-BOT Dashboard</title>
+<style>
+  :root {
+    --bg:#0d1117; --panel:#161b25; --panel2:#1c2230; --line:#2a3140;
+    --txt:#e6edf3; --dim:#8b95a5; --accent:#7c9cff; --green:#41c97a;
+    --red:#f0524b; --orange:#e8a13a; --blue:#4f9dff; --purple:#a472f0;
+    --cyan:#3fc8d4;
+  }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  body { background:var(--bg); color:var(--txt); font-family:"Segoe UI",
+         system-ui,sans-serif; line-height:1.5; padding-bottom:60px; }
+  a { color:var(--accent); text-decoration:none; cursor:pointer; }
+  header { background:linear-gradient(120deg,#1a2740,#3a2a55 58%,#1f3a3a);
+           padding:22px 22px 0; border-bottom:1px solid var(--line); }
+  .wrap { max-width:1240px; margin:0 auto; padding:0 18px; }
+  header h1 { font-size:23px; letter-spacing:.3px; }
+  header p { color:var(--dim); font-size:13px; margin-top:3px; }
+  nav { display:flex; gap:4px; flex-wrap:wrap; margin-top:14px; }
+  nav a { padding:9px 15px; font-size:13px; color:var(--dim);
+          border-radius:9px 9px 0 0; border:1px solid transparent;
+          border-bottom:none; }
+  nav a.on { background:var(--bg); color:var(--txt); font-weight:600;
+             border-color:var(--line); }
+  .live { display:inline-block; width:8px; height:8px; border-radius:50%;
+          background:var(--green); margin-right:6px; animation:pulse 2s infinite; }
+  @keyframes pulse { 50%{ opacity:.3; } }
+  .periods { display:flex; gap:6px; flex-wrap:wrap; margin:18px 0; }
+  .periods button { background:var(--panel2); color:var(--dim);
+    border:1px solid var(--line); border-radius:20px; padding:5px 14px;
+    font-size:12px; cursor:pointer; }
+  .periods button.on { background:var(--accent); color:#0d1117;
+    border-color:var(--accent); font-weight:600; }
+  .stats { display:grid; gap:13px; margin:18px 0;
+    grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); }
+  .stat { background:var(--panel); border:1px solid var(--line);
+    border-radius:12px; padding:13px 15px; }
+  .stat .v { font-size:25px; font-weight:700; }
+  .stat .l { color:var(--dim); font-size:11px; text-transform:uppercase;
+    letter-spacing:.6px; margin-top:2px; }
+  .card { background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; padding:18px; margin-bottom:20px; }
+  .card h2 { font-size:16px; margin-bottom:13px; display:flex;
+    justify-content:space-between; align-items:center; gap:10px; }
+  .card h2 .sub { color:var(--dim); font-size:12px; font-weight:400; }
+  .grid2 { display:grid; gap:20px; grid-template-columns:1.45fr 1fr; }
+  @media (max-width:860px){ .grid2{ grid-template-columns:1fr; } }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th { text-align:left; color:var(--dim); font-weight:600; font-size:11px;
+    text-transform:uppercase; padding:7px 8px; border-bottom:1px solid var(--line);
+    cursor:pointer; white-space:nowrap; }
+  th.no { cursor:default; }
+  th .ar { color:var(--accent); }
+  td { padding:7px 8px; border-bottom:1px solid #20262f; }
+  tr.row { cursor:pointer; }
+  tr.row:hover td { background:var(--panel2); }
+  .num { font-variant-numeric:tabular-nums; font-weight:600; }
+  .pill { font-size:11px; padding:2px 8px; border-radius:20px; font-weight:600;
+    white-space:nowrap; }
+  .on-pill { background:rgba(65,201,122,.16); color:var(--green); }
+  .off-pill { background:rgba(240,82,75,.16); color:var(--red); }
+  .tier { font-size:11px; padding:2px 9px; border-radius:20px; font-weight:600; }
+  .t-rock { background:rgba(65,201,122,.16); color:var(--green); }
+  .t-stable { background:rgba(79,157,255,.16); color:var(--blue); }
+  .t-flaky { background:rgba(232,161,58,.16); color:var(--orange); }
+  .t-rare { background:rgba(240,82,75,.16); color:var(--red); }
+  .chartwrap { position:relative; }
+  .chart { width:100%; display:block; }
+  .grid { stroke:#222a36; stroke-width:1; }
+  .ylab { fill:var(--dim); font-size:13px; text-anchor:end; }
+  .xlab { fill:var(--dim); font-size:13px; text-anchor:middle; }
+  .ranklab { fill:var(--txt); font-size:14px; text-anchor:end; }
+  .rankval { fill:var(--dim); font-size:13px; }
+  .guide { stroke:var(--accent); stroke-width:1; stroke-dasharray:3 3; }
+  .tip { position:absolute; pointer-events:none; background:#0a0d12;
+    border:1px solid var(--line); border-radius:8px; padding:7px 9px;
+    font-size:12px; min-width:130px; z-index:5; transition:opacity .08s; }
+  .tip .tipt { color:var(--dim); margin-bottom:3px; font-size:11px; }
+  .tip .sw { display:inline-block; width:9px; height:9px; border-radius:2px;
+    margin-right:5px; vertical-align:middle; }
+  .legend { display:flex; flex-wrap:wrap; gap:4px 14px; margin-top:10px;
+    font-size:12px; max-height:120px; overflow:auto; }
+  .legend span { display:flex; align-items:center; gap:5px; color:var(--dim); }
+  .legend .sw { width:11px; height:11px; border-radius:3px; }
+  .empty { color:var(--dim); padding:34px; text-align:center; font-size:13px; }
+  .anom { padding:9px 4px; border-bottom:1px solid #20262f; font-size:13px; }
+  .anom:last-child { border:0; }
+  .anom .top { display:flex; gap:8px; align-items:center; }
+  .anom .dot { width:9px; height:9px; border-radius:50%; flex:none; }
+  .anom .ty { font-weight:600; }
+  .anom .ts { color:var(--dim); font-size:11px; margin-left:auto; }
+  .anom .detail { color:var(--dim); font-size:12px; margin:2px 0 0 17px; }
+  .anom .who { color:var(--txt); font-size:12px; margin-left:17px; }
+  .filters { display:flex; gap:10px; flex-wrap:wrap; align-items:center;
+    margin-bottom:14px; }
+  select, input.search { background:var(--panel2); color:var(--txt);
+    border:1px solid var(--line); border-radius:8px; padding:6px 10px;
+    font-size:13px; }
+  input.search { min-width:220px; }
+  .kv { display:grid; gap:10px; margin:14px 0;
+    grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); }
+  .kv div { background:var(--panel2); border:1px solid var(--line);
+    border-radius:10px; padding:9px 12px; }
+  .kv .l { color:var(--dim); font-size:11px; text-transform:uppercase; }
+  .kv .v { font-size:16px; font-weight:600; }
+  .charth { color:var(--dim); font-size:12px; margin:16px 0 4px;
+    text-transform:uppercase; letter-spacing:.5px; }
+  .modal { position:fixed; inset:0; background:rgba(0,0,0,.65); display:none;
+    align-items:flex-start; justify-content:center; padding:36px 16px;
+    overflow:auto; z-index:50; }
+  .modal.show { display:flex; }
+  .sheet { background:var(--panel); border:1px solid var(--line);
+    border-radius:16px; max-width:940px; width:100%; padding:22px; }
+  .sheet h2 { font-size:20px; }
+  .close { float:right; background:var(--panel2); border:1px solid var(--line);
+    color:var(--txt); border-radius:8px; padding:5px 12px; cursor:pointer; }
+  .toolbar { display:flex; justify-content:space-between; align-items:center;
+    flex-wrap:wrap; gap:10px; }
+  .badge { font-size:11px; background:var(--panel2); border:1px solid var(--line);
+    border-radius:20px; padding:2px 9px; color:var(--dim); }
+  footer { color:var(--dim); font-size:12px; text-align:center; margin-top:14px; }
+</style>
+</head>
+<body>
+<header><div class="wrap">
+  <h1 id="title">AO-MS-BOT Dashboard</h1>
+  <p><span class="live"></span>Live Attorney Online master-server data
+     &mdash; <span id="updated">loading&hellip;</span></p>
+  <nav id="nav"></nav>
+</div></header>
+
+<div class="wrap"><div id="view"><div class="empty">Loading&hellip;</div></div>
+  <footer id="footer"></footer>
+</div>
+
+<div class="modal" id="modal"><div class="sheet" id="sheet"></div></div>
+
+<script>
+"use strict";
+const TABS = [
+  ["dashboard","Dashboard"], ["servers","Servers"], ["players","Players"],
+  ["compare","Compare"], ["hb","HB Counter"], ["anomalies","Anomalies"],
+  ["dead","Dead Servers"],
+];
+const PERIODS = [["day","Day"],["week","Week"],["month","Month"],
+                 ["year","Year"],["all","All time"]];
+const SEV = {alert:"var(--red)", high:"var(--red)", low:"var(--orange)",
+             info:"var(--blue)"};
+const PALETTE = ["#7c9cff","#41c97a","#e8a13a","#f0524b","#a472f0","#3fc8d4",
+  "#e86fb0","#9bd14b","#5f8de8","#d4953f","#62c98f","#b07cf0","#e8c13a",
+  "#4fb0e0","#e0726b","#7ad48f"];
+
+const state = { tab:"dashboard", period:"all", meta:{}, sort:{} };
+let refreshTimer = null;
+
+// ---- tiny helpers --------------------------------------------------------
+function el(tag,cls,txt){ const e=document.createElement(tag);
+  if(cls) e.className=cls; if(txt!==undefined) e.textContent=txt; return e; }
+function esc(s){ return String(s==null?"":s).replace(/&/g,"&amp;")
+  .replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+function clip(s,n){ s=String(s==null?"":s); return s.length>n?s.slice(0,n-1)+"…":s; }
+function fmtTs(s){ return s?s.slice(0,16).replace("T"," "):"-"; }
+function fmtNum(v){ v=Number(v)||0;
+  return Math.abs(v)>=1000 ? Math.round(v).toLocaleString()
+       : (Math.round(v*10)/10).toString(); }
+function fmtAxisTime(ms,span){ const d=new Date(ms);
+  if(span < 2*864e5) return String(d.getHours()).padStart(2,"0")+":"+
+                            String(d.getMinutes()).padStart(2,"0");
+  return (d.getMonth()+1)+"/"+d.getDate(); }
+async function getJSON(url){ const r=await fetch(url);
+  if(!r.ok && r.status!==404) throw new Error(r.status); return r.json(); }
+function ms(t){ return new Date(t).getTime(); }
+
+// ---- chart library -------------------------------------------------------
+function emptyBox(msg){ const w=el("div","chartwrap");
+  w.appendChild(el("div","empty",msg||"Not enough data.")); return w; }
+
+function lineChart(opts){
+  const series=(opts.series||[]).map(s=>({name:s.name,color:s.color,
+      points:(s.points||[]).filter(p=>p[1]!=null)}))
+    .filter(s=>s.points.length>0);
+  if(!series.length || series.every(s=>s.points.length<2))
+    return emptyBox("Not enough data for this range.");
+  const W=1000,H=opts.height||320,ML=58,MR=20,MT=16,MB=38;
+  const PW=W-ML-MR,PH=H-MT-MB;
+  let xs=[],ys=[];
+  series.forEach(s=>s.points.forEach(p=>{xs.push(p[0]);ys.push(p[1]);}));
+  const x0=Math.min(...xs),x1=Math.max(...xs);
+  let y1=Math.max(...ys),y0=opts.yMin!=null?opts.yMin:Math.min(...ys);
+  if(opts.yMin==null && y0>0) y0=0;
+  if(y1<=y0) y1=y0+1;
+  const px=x=>ML+(x-x0)/((x1-x0)||1)*PW;
+  const py=y=>MT+PH-(y-y0)/((y1-y0)||1)*PH;
+  let g="";
+  for(let i=0;i<=4;i++){ const v=y0+(y1-y0)*i/4,yy=py(v);
+    g+=`<line x1="${ML}" y1="${yy}" x2="${W-MR}" y2="${yy}" class="grid"/>`;
+    g+=`<text x="${ML-8}" y="${yy+4}" class="ylab">${fmtNum(v)}</text>`; }
+  const span=x1-x0;
+  for(let i=0;i<=5;i++){ const x=x0+span*i/5,xx=px(x);
+    g+=`<text x="${xx}" y="${H-13}" class="xlab">${fmtAxisTime(x,span)}</text>`; }
+  let paths="";
+  series.forEach(s=>{
+    const d=s.points.map((p,i)=>(i?"L":"M")+px(p[0]).toFixed(1)+" "+
+            py(p[1]).toFixed(1)).join(" ");
+    if(opts.area && series.length===1){
+      const last=s.points[s.points.length-1];
+      paths+=`<path d="${d} L${px(last[0]).toFixed(1)} ${MT+PH} `+
+             `L${px(s.points[0][0]).toFixed(1)} ${MT+PH} Z" `+
+             `fill="${s.color}" fill-opacity="0.13"/>`;
+    }
+    paths+=`<path d="${d}" fill="none" stroke="${s.color}" `+
+           `stroke-width="${series.length>8?1.3:2}" `+
+           `stroke-linejoin="round" stroke-linecap="round"/>`;
+  });
+  const dots=series.map(s=>`<circle r="3.6" fill="${s.color}" `+
+    `class="hdot" style="opacity:0"/>`).join("");
+  const wrap=el("div","chartwrap");
+  wrap.innerHTML=`<svg viewBox="0 0 ${W} ${H}" class="chart">${g}`+
+    `<line class="guide" y1="${MT}" y2="${MT+PH}" style="opacity:0"/>`+
+    `${paths}${dots}</svg><div class="tip" style="opacity:0"></div>`;
+  const svg=wrap.querySelector("svg"),guide=wrap.querySelector(".guide"),
+        tip=wrap.querySelector(".tip"),dotEls=[...wrap.querySelectorAll(".hdot")];
+  svg.addEventListener("mousemove",ev=>{
+    const r=svg.getBoundingClientRect();
+    const vx=(ev.clientX-r.left)/r.width*W;
+    if(vx<ML||vx>W-MR){ return; }
+    const dx=x0+(vx-ML)/PW*(x1-x0);
+    guide.setAttribute("x1",vx); guide.setAttribute("x2",vx);
+    guide.style.opacity=1;
+    const rows=[]; let when=dx;
+    series.forEach((s,i)=>{
+      let best=s.points[0],bd=Infinity;
+      for(const p of s.points){ const d=Math.abs(p[0]-dx);
+        if(d<bd){ bd=d; best=p; } }
+      dotEls[i].setAttribute("cx",px(best[0]));
+      dotEls[i].setAttribute("cy",py(best[1]));
+      dotEls[i].style.opacity=1;
+      if(i===0) when=best[0];
+      rows.push(`<div><span class="sw" style="background:${s.color}"></span>`+
+        `${esc(clip(s.name,22))}: <b>${fmtNum(best[1])}</b></div>`);
+    });
+    tip.innerHTML=`<div class="tipt">${new Date(when).toLocaleString()}</div>`+
+      rows.join("");
+    tip.style.opacity=1;
+    const c=wrap.getBoundingClientRect();
+    let left=ev.clientX-c.left+15;
+    if(left>c.width-170) left=ev.clientX-c.left-165;
+    tip.style.left=left+"px";
+    tip.style.top=Math.max(4,ev.clientY-c.top-10)+"px";
+  });
+  svg.addEventListener("mouseleave",()=>{
+    guide.style.opacity=0; tip.style.opacity=0;
+    dotEls.forEach(d=>d.style.opacity=0);
+  });
+  return wrap;
+}
+
+function dailyChart(opts){
+  const days=opts.days||[];
+  if(!days.length) return emptyBox("No daily data for this range.");
+  const W=1000,H=opts.height||300,ML=54,MR=16,MT=16,MB=40;
+  const PW=W-ML-MR,PH=H-MT-MB;
+  const y1=Math.max(...days.map(d=>d.peak),1);
+  const py=v=>MT+PH-v/y1*PH;
+  const n=days.length,step=PW/n;
+  const bw=Math.max(2,Math.min(36,step*0.66));
+  const color=opts.color||"var(--green)";
+  let g="";
+  for(let i=0;i<=4;i++){ const v=y1*i/4,yy=py(v);
+    g+=`<line x1="${ML}" y1="${yy}" x2="${W-MR}" y2="${yy}" class="grid"/>`;
+    g+=`<text x="${ML-8}" y="${yy+4}" class="ylab">${fmtNum(v)}</text>`; }
+  let bars="";
+  days.forEach((d,i)=>{
+    const cx=ML+step*i+step/2,top=py(d.peak),bot=py(d.low);
+    bars+=`<rect x="${cx-bw/2}" y="${top}" width="${bw}" `+
+      `height="${Math.max(1,bot-top)}" rx="2" fill="${color}" `+
+      `fill-opacity="0.5"><title>${d.day}  peak ${d.peak} / avg ${d.avg}`+
+      ` / low ${d.low}</title></rect>`;
+    bars+=`<line x1="${cx-bw/2}" y1="${py(d.avg)}" x2="${cx+bw/2}" `+
+      `y2="${py(d.avg)}" stroke="${color}" stroke-width="2"/>`;
+  });
+  const every=Math.max(1,Math.ceil(n/9));
+  let xl="";
+  days.forEach((d,i)=>{ if(i%every===0){ const cx=ML+step*i+step/2;
+    xl+=`<text x="${cx}" y="${H-14}" class="xlab">${d.day.slice(5)}</text>`; }});
+  const wrap=el("div","chartwrap");
+  wrap.innerHTML=`<svg viewBox="0 0 ${W} ${H}" class="chart">${g}${bars}${xl}</svg>`;
+  return wrap;
+}
+
+function rankChart(opts){
+  const items=opts.items||[];
+  if(!items.length) return emptyBox("No data.");
+  const rowH=27,W=1000,LW=opts.labelWidth||250,MR=80;
+  const H=items.length*rowH+14;
+  const max=Math.max(...items.map(i=>i.value),1);
+  const barW=W-LW-MR;
+  let s="";
+  items.forEach((it,i)=>{
+    const y=8+i*rowH,w=Math.max(2,it.value/max*barW);
+    s+=`<text x="${LW-8}" y="${y+rowH/2-3}" class="ranklab">`+
+       `${esc(clip(it.label,34))}</text>`;
+    s+=`<rect x="${LW}" y="${y}" width="${w}" height="${rowH-10}" rx="3" `+
+       `fill="${it.color||"#7c9cff"}"/>`;
+    s+=`<text x="${LW+w+7}" y="${y+rowH/2-3}" class="rankval">`+
+       `${fmtNum(it.value)}${opts.suffix||""}</text>`;
+  });
+  const wrap=el("div","chartwrap");
+  wrap.innerHTML=`<svg viewBox="0 0 ${W} ${H}" class="chart" `+
+    `style="max-height:${Math.min(H,560)}px">${s}</svg>`;
+  return wrap;
+}
+
+function legend(series){
+  const box=el("div","legend");
+  series.forEach(s=>{
+    const sp=el("span");
+    const sw=el("span","sw"); sw.style.background=s.color;
+    sp.appendChild(sw); sp.appendChild(document.createTextNode(clip(s.name,30)));
+    box.appendChild(sp);
+  });
+  return box;
+}
+
+// ---- shared bits ---------------------------------------------------------
+function periodBar(){
+  const box=el("div","periods");
+  for(const [v,l] of PERIODS){
+    const b=el("button",v===state.period?"on":"",l);
+    b.onclick=()=>{ state.period=v; render(); };
+    box.appendChild(b);
+  }
+  return box;
+}
+function card(titleNode){
+  const c=el("div","card");
+  if(titleNode){ const h=el("h2"); if(typeof titleNode==="string")
+    h.textContent=titleNode; else h.appendChild(titleNode); c.appendChild(h); }
+  return c;
+}
+function statGrid(stats){
+  const items=[
+    ["Servers online",stats.online,"var(--green)"],
+    ["Servers known",stats.known,"var(--txt)"],
+    ["Players now",stats.last_players,"var(--cyan)"],
+    ["Successful polls",stats.polls,"var(--blue)"],
+    ["Failed polls",stats.failed,"var(--orange)"],
+    ["Snapshots",stats.snapshots,"var(--purple)"],
+    ["Anomalies",stats.anomalies,"var(--orange)"],
+    ["Alerts",stats.alerts,"var(--red)"],
+    ["Bot bursts",stats.bot_spikes,"var(--orange)"],
+  ];
+  const box=el("div","stats");
+  for(const [l,v,c] of items){
+    if(v===undefined) continue;
+    const d=el("div","stat");
+    const vv=el("div","v",(Number(v)||0).toLocaleString()); vv.style.color=c;
+    d.appendChild(vv); d.appendChild(el("div","l",l));
+    box.appendChild(d);
+  }
+  return box;
+}
+function anomItem(a,showWho){
+  const d=el("div","anom");
+  const top=el("div","top");
+  const dot=el("span","dot"); dot.style.background=SEV[a.severity]||"var(--dim)";
+  top.appendChild(dot);
+  top.appendChild(el("span","ty",a.type));
+  top.appendChild(el("span","ts",fmtTs(a.ts)));
+  d.appendChild(top);
+  if(showWho!==false && a.name){
+    const who=el("div","who");
+    const link=el("a",null,a.name);
+    link.onclick=()=>openServer(a.server_key);
+    who.appendChild(link); d.appendChild(who);
+  }
+  d.appendChild(el("div","detail",a.detail||""));
+  return d;
+}
+// sortable table: cols=[{key,label,cell,num}], rows already objects
+function sortTable(cols,rows,tableId,onRowClick){
+  const sortKey=state.sort[tableId];
+  if(sortKey){
+    const col=cols.find(c=>c.key===sortKey.key);
+    rows=rows.slice().sort((a,b)=>{
+      let x=a[sortKey.key],y=b[sortKey.key];
+      if(col&&col.num){ x=Number(x)||0; y=Number(y)||0; }
+      else { x=String(x==null?"":x).toLowerCase();
+             y=String(y==null?"":y).toLowerCase(); }
+      return (x<y?-1:x>y?1:0)*(sortKey.dir);
+    });
+  }
+  const t=el("table");
+  const thead=el("thead"),htr=el("tr");
+  for(const c of cols){
+    const th=el("th",c.sortable===false?"no":null);
+    th.textContent=c.label;
+    if(c.sortable!==false){
+      if(sortKey&&sortKey.key===c.key){
+        const ar=el("span","ar"," "+(sortKey.dir>0?"▲":"▼"));
+        th.appendChild(ar);
+      }
+      th.onclick=()=>{
+        const cur=state.sort[tableId];
+        state.sort[tableId]=(cur&&cur.key===c.key)
+          ? {key:c.key,dir:-cur.dir} : {key:c.key,dir:c.num?-1:1};
+        render();
+      };
+    }
+    htr.appendChild(th);
+  }
+  thead.appendChild(htr); t.appendChild(thead);
+  const tb=el("tbody");
+  for(const r of rows){
+    const tr=el("tr",onRowClick?"row":null);
+    if(onRowClick) tr.onclick=()=>onRowClick(r);
+    for(const c of cols){
+      const td=el("td",c.num?"num":null);
+      const v=c.cell?c.cell(r):r[c.key];
+      if(v instanceof Node) td.appendChild(v);
+      else td.textContent=(v==null?"-":v);
+      tr.appendChild(td);
+    }
+    tb.appendChild(tr);
+  }
+  t.appendChild(tb);
+  return t;
+}
+function statusPill(s){
+  return el("span","pill "+(s==="online"?"on-pill":"off-pill"),s);
+}
+
+// ---- tab: dashboard ------------------------------------------------------
+async function renderDashboard(view){
+  const d=await getJSON("/api/overview?period="+state.period);
+  d.stats.last_players=d.players.length?d.players[d.players.length-1].p:0;
+  view.appendChild(periodBar());
+  view.appendChild(statGrid(d.stats));
+
+  const pc=card("Global player count");
+  pc.querySelector("h2").appendChild(
+    el("span","sub",d.players.length+" data points"));
+  pc.appendChild(lineChart({series:[{name:"Players",color:"var(--green)",
+    points:d.players.map(p=>[ms(p.t),p.p])}],area:true}));
+  view.appendChild(pc);
+
+  const g=el("div","grid2");
+  const sc=card("Servers right now");
+  sc.querySelector("h2").appendChild(el("span","sub",d.servers.length+" online"));
+  if(!d.servers.length) sc.appendChild(el("div","empty","No servers online."));
+  else sc.appendChild(sortTable(
+    [{key:"name",label:"Server",cell:r=>{const a=el("a",null,r.name);
+        a.onclick=()=>openServer(r.key);return a;}},
+     {key:"players",label:"Players",num:true},
+     {key:"hb",label:"HB",num:true,cell:r=>r.hb==null?"-":r.hb},
+     {key:"status",label:"Status",cell:r=>statusPill(r.status)}],
+    d.servers,"dash-srv",r=>openServer(r.key)));
+  g.appendChild(sc);
+
+  const ac=card("Recent anomalies");
+  if(!d.anomalies.length) ac.appendChild(el("div","empty","No anomalies. All clear!"));
+  else d.anomalies.slice(0,40).forEach(a=>ac.appendChild(anomItem(a)));
+  g.appendChild(ac);
+  view.appendChild(g);
+}
+
+// ---- tab: servers --------------------------------------------------------
+let serverSearch="";
+async function renderServers(view){
+  const d=await getJSON("/api/servers?period="+state.period);
+  view.appendChild(periodBar());
+
+  const c=card("Every tracked server");
+  c.querySelector("h2").appendChild(
+    el("span","sub",d.servers.length+" servers · "+d.polls+" polls"));
+  const fil=el("div","filters");
+  const inp=el("input","search"); inp.type="search";
+  inp.placeholder="Search servers by name or address…";
+  inp.value=serverSearch;
+  inp.oninput=()=>{ serverSearch=inp.value;
+    list.replaceChildren(buildTable()); };
+  fil.appendChild(inp);
+  c.appendChild(fil);
+
+  function buildTable(){
+    const q=serverSearch.trim().toLowerCase();
+    let rows=d.servers;
+    if(q) rows=rows.filter(r=>(r.name||"").toLowerCase().includes(q)||
+      (r.key||"").toLowerCase().includes(q));
+    if(!rows.length) return el("div","empty","No servers match your search.");
+    return sortTable([
+      {key:"name",label:"Server",cell:r=>{const a=el("a",null,r.name);
+        a.onclick=()=>openServer(r.key);return a;}},
+      {key:"key",label:"Address"},
+      {key:"status",label:"Status",cell:r=>statusPill(r.status)},
+      {key:"players",label:"Players",num:true,
+        cell:r=>r.players==null?"-":r.players},
+      {key:"peak",label:"Peak",num:true},
+      {key:"mean",label:"Mean",num:true},
+      {key:"uptime",label:"Uptime %",num:true,
+        cell:r=>r.uptime.toFixed(1)},
+      {key:"snaps",label:"Snapshots",num:true},
+      {key:"anomalies",label:"Anomalies",num:true},
+      {key:"alerts",label:"Alerts",num:true},
+      {key:"last_seen",label:"Last seen",cell:r=>fmtTs(r.last_seen)},
+    ],rows,"servers",r=>openServer(r.key));
+  }
+  const list=el("div"); list.appendChild(buildTable());
+  c.appendChild(list);
+  view.appendChild(c);
+
+  const top=d.servers.slice().sort((a,b)=>b.peak-a.peak).slice(0,15);
+  const rc=card("Top 15 servers by peak players");
+  rc.appendChild(rankChart({items:top.map((s,i)=>({label:s.name,
+    value:s.peak,color:PALETTE[i%PALETTE.length]}))}));
+  view.appendChild(rc);
+}
+
+// ---- tab: players --------------------------------------------------------
+async function renderPlayers(view){
+  const d=await getJSON("/api/players?period="+state.period);
+  view.appendChild(periodBar());
+
+  const tc=card("Player count — continuous trend");
+  tc.querySelector("h2").appendChild(el("span","sub",d.polls+" polls"));
+  tc.appendChild(lineChart({series:[{name:"Players",color:"var(--green)",
+    points:d.trend.map(p=>[ms(p.t),p.p])}],area:true,height:340}));
+  view.appendChild(tc);
+
+  const sc=card("Servers online — continuous trend");
+  sc.appendChild(lineChart({series:[{name:"Servers",color:"var(--blue)",
+    points:d.trend.map(p=>[ms(p.t),p.s])}],area:true,height:240}));
+  view.appendChild(sc);
+
+  const dc=card("Daily peak / average / low — players");
+  dc.querySelector("h2").appendChild(
+    el("span","sub","bar = peak→low range, line = average"));
+  dc.appendChild(dailyChart({days:d.daily,color:"var(--green)"}));
+  view.appendChild(dc);
+
+  const ds=card("Daily peak / average / low — servers online");
+  ds.appendChild(dailyChart({days:d.daily_servers,color:"var(--blue)"}));
+  view.appendChild(ds);
+}
+
+// ---- tab: compare --------------------------------------------------------
+const TIER_LABEL={rock:"Rock solid (≥90%)",stable:"Stable (50–90%)",
+  flaky:"Flaky (20–50%)",rare:"Rarely online (<20%)"};
+async function renderCompare(view){
+  const d=await getJSON("/api/compare?period="+state.period);
+  view.appendChild(periodBar());
+
+  if(!d.servers.length){
+    view.appendChild(card("Comparison"));
+    view.lastChild.appendChild(el("div","empty","No server data yet."));
+    return;
+  }
+  const oc=card("Busiest servers — player counts overlaid");
+  oc.querySelector("h2").appendChild(
+    el("span","sub","top "+d.overlay.length+" by peak · "+
+       d.poll_count+" polls"));
+  const series=d.overlay.map((s,i)=>({name:s.name,
+    color:PALETTE[i%PALETTE.length],
+    points:s.points.map(p=>[ms(p[0]),p[1]])}));
+  if(d.global.length) series.unshift({name:"Global total",color:"#ffffff",
+    points:d.global.map(p=>[ms(p[0]),p[1]])});
+  oc.appendChild(lineChart({series,height:360}));
+  oc.appendChild(legend(series));
+  view.appendChild(oc);
+
+  // tier breakdown
+  const byTier={rock:[],stable:[],flaky:[],rare:[]};
+  d.servers.forEach(s=>byTier[s.tier||"rare"].push(s));
+  const tc=card("Reliability tiers");
+  for(const slug of ["rock","stable","flaky","rare"]){
+    const list=byTier[slug].sort((a,b)=>b.uptime-a.uptime||b.peak-a.peak);
+    const h=el("div","charth");
+    h.textContent=TIER_LABEL[slug]+" — "+list.length+" server(s)";
+    tc.appendChild(h);
+    if(!list.length){ tc.appendChild(el("div","empty","None.")); continue; }
+    tc.appendChild(sortTable([
+      {key:"name",label:"Server",cell:r=>{const a=el("a",null,r.name);
+        a.onclick=()=>openServer(r.key);return a;}},
+      {key:"uptime",label:"Uptime %",num:true,cell:r=>r.uptime.toFixed(1)},
+      {key:"peak",label:"Peak",num:true},
+      {key:"mean",label:"Mean",num:true},
+      {key:"anomalies",label:"Anomalies",num:true},
+      {key:"bot_spikes",label:"Bot bursts",num:true},
+    ],list,"tier-"+slug,r=>openServer(r.key)));
+  }
+  view.appendChild(tc);
+
+  const rc=card("Servers ranked by uptime");
+  const ranked=d.servers.slice().sort((a,b)=>b.uptime-a.uptime).slice(0,20);
+  rc.appendChild(rankChart({items:ranked.map(s=>({label:s.name,
+    value:s.uptime,color:"var(--blue)"})),suffix:"%"}));
+  view.appendChild(rc);
+}
+
+// ---- tab: hb -------------------------------------------------------------
+async function renderHB(view){
+  const d=await getJSON("/api/hb?period="+state.period);
+  view.appendChild(periodBar());
+  if(!d.servers.length){
+    const c=card("HB counter"); c.appendChild(el("div","empty","No data."));
+    view.appendChild(c); return;
+  }
+  const sus=d.servers.filter(s=>s.suspicious>0);
+  const gc=card("Heartbeat counter — every server");
+  gc.querySelector("h2").appendChild(el("span","sub",
+    d.servers.length+" servers · "+sus.length+" with flagged activity"));
+  const series=d.servers.filter(s=>s.points.length>1).map((s,i)=>({
+    name:s.name,color:s.suspicious>0?"#f0524b":PALETTE[i%PALETTE.length],
+    points:s.points.map(p=>[ms(p[0]),p[1]])}));
+  gc.appendChild(lineChart({series,height:380}));
+  gc.appendChild(legend(series));
+  view.appendChild(gc);
+
+  const lc=card("Per-server heartbeat status");
+  lc.querySelector("h2").appendChild(
+    el("span","sub","red = possible tampering flagged"));
+  lc.appendChild(sortTable([
+    {key:"name",label:"Server",cell:r=>{const a=el("a",null,r.name);
+      a.onclick=()=>openServer(r.key);return a;}},
+    {key:"key",label:"Address"},
+    {key:"latest_hb",label:"Latest HB",num:true,
+      cell:r=>r.latest_hb==null?"-":r.latest_hb},
+    {key:"suspicious",label:"Flagged",num:true,cell:r=>{
+      const span=el("span",null,String(r.suspicious));
+      if(r.suspicious>0) span.style.color="var(--red)";
+      return span;}},
+    {key:"status",label:"Status",cell:r=>statusPill(r.status)},
+  ],d.servers,"hb",r=>openServer(r.key)));
+  view.appendChild(lc);
+}
+
+// ---- tab: anomalies ------------------------------------------------------
+const anomFilter={type:"",severity:""};
+async function renderAnomalies(view){
+  const qs="period="+state.period+
+    (anomFilter.type?"&type="+encodeURIComponent(anomFilter.type):"")+
+    (anomFilter.severity?"&severity="+encodeURIComponent(anomFilter.severity):"");
+  const d=await getJSON("/api/anomalies?"+qs);
+  view.appendChild(periodBar());
+
+  const c=card("Anomaly browser");
+  c.querySelector("h2").appendChild(
+    el("span","sub",d.anomalies.length+" shown (newest first)"));
+  const fil=el("div","filters");
+  const tsel=el("select");
+  tsel.appendChild(new Option("All types",""));
+  Object.entries(d.type_counts).forEach(([t,n])=>{
+    const o=new Option(t+" ("+n+")",t); tsel.appendChild(o);
+  });
+  tsel.value=anomFilter.type;
+  tsel.onchange=()=>{ anomFilter.type=tsel.value; render(); };
+  fil.appendChild(tsel);
+  const ssel=el("select");
+  [["","All severities"],["alert","Alert"],["low","Low"],["info","Info"]]
+    .forEach(([v,l])=>ssel.appendChild(new Option(l,v)));
+  ssel.value=anomFilter.severity;
+  ssel.onchange=()=>{ anomFilter.severity=ssel.value; render(); };
+  fil.appendChild(ssel);
+  c.appendChild(fil);
+
+  if(!d.anomalies.length) c.appendChild(el("div","empty",
+    "No anomalies match these filters."));
+  else d.anomalies.forEach(a=>c.appendChild(anomItem(a)));
+  view.appendChild(c);
+
+  const types=Object.entries(d.type_counts)
+    .sort((a,b)=>b[1]-a[1]);
+  if(types.length){
+    const rc=card("Anomalies by type");
+    rc.appendChild(rankChart({items:types.map(([t,n],i)=>({label:t,value:n,
+      color:PALETTE[i%PALETTE.length]})),labelWidth:200}));
+    view.appendChild(rc);
+  }
+}
+
+// ---- tab: dead servers ---------------------------------------------------
+async function renderDead(view){
+  const d=await getJSON("/api/deadservers");
+  const c=card("Dead servers");
+  c.querySelector("h2").appendChild(el("span","sub",
+    "absent "+d.threshold_days+"+ days — history is kept"));
+  if(!d.servers.length) c.appendChild(el("div","empty",
+    "No dead servers — every tracked server has appeared recently."));
+  else c.appendChild(sortTable([
+    {key:"name",label:"Server",cell:r=>{const a=el("a",null,r.name);
+      a.onclick=()=>openServer(r.key);return a;}},
+    {key:"key",label:"Address"},
+    {key:"days",label:"Days gone",num:true},
+    {key:"last_seen",label:"Last seen",cell:r=>fmtTs(r.last_seen)},
+    {key:"first_seen",label:"First seen",cell:r=>fmtTs(r.first_seen)},
+  ],d.servers,"dead",r=>openServer(r.key)));
+  view.appendChild(c);
+}
+
+// ---- server detail modal -------------------------------------------------
+async function openServer(key){
+  const modal=document.getElementById("modal");
+  const sheet=document.getElementById("sheet");
+  sheet.innerHTML='<div class="empty">Loading…</div>';
+  modal.classList.add("show");
+  let d;
+  try { d=await getJSON("/api/server?period="+state.period+
+        "&key="+encodeURIComponent(key)); }
+  catch(e){ sheet.innerHTML='<div class="empty">Could not load server.</div>';
+            return; }
+  if(d.error){ sheet.innerHTML='<div class="empty">'+esc(d.error)+'</div>';
+               return; }
+  sheet.innerHTML="";
+  const close=el("button","close","Close");
+  close.onclick=()=>modal.classList.remove("show");
+  sheet.appendChild(close);
+  const s=d.server,snap=d.snapshot;
+  sheet.appendChild(el("h2",null,s.name));
+  const addr=el("p",null,s.server_key);
+  addr.style.color="var(--dim)"; addr.style.fontSize="12px";
+  sheet.appendChild(addr);
+
+  const kv=el("div","kv");
+  [["Status",s.status],["Players",snap?snap.players:"-"],
+   ["HB counter",snap&&snap.hbcounter!=null?snap.hbcounter:"-"],
+   ["Data points",d.points],["First seen",fmtTs(s.first_seen)],
+   ["Last seen",fmtTs(s.last_seen)]].forEach(([l,v])=>{
+    const c=el("div");
+    c.appendChild(el("div","l",l));
+    c.appendChild(el("div","v",String(v)));
+    kv.appendChild(c);
+  });
+  sheet.appendChild(kv);
+
+  sheet.appendChild(el("div","charth","Players over time"));
+  sheet.appendChild(lineChart({series:[{name:"Players",color:"var(--blue)",
+    points:d.history.map(h=>[ms(h.t),h.p])}],area:true,height:240}));
+
+  sheet.appendChild(el("div","charth","Heartbeat counter over time"));
+  sheet.appendChild(lineChart({series:[{name:"HB",color:"var(--purple)",
+    points:d.history.filter(h=>h.hb!=null).map(h=>[ms(h.t),h.hb])}],
+    yMin:null,height:240}));
+
+  sheet.appendChild(el("div","charth","Daily peak / average / low — players"));
+  sheet.appendChild(dailyChart({days:d.daily,color:"var(--blue)",height:230}));
+
+  sheet.appendChild(el("div","charth","Anomalies ("+d.anomalies.length+")"));
+  if(!d.anomalies.length) sheet.appendChild(el("div","empty",
+    "No anomalies recorded for this server."));
+  else d.anomalies.forEach(a=>sheet.appendChild(anomItem(a,false)));
+}
+
+// ---- router --------------------------------------------------------------
+const RENDERERS={dashboard:renderDashboard,servers:renderServers,
+  players:renderPlayers,compare:renderCompare,hb:renderHB,
+  anomalies:renderAnomalies,dead:renderDead};
+
+function buildNav(){
+  const nav=document.getElementById("nav");
+  nav.innerHTML="";
+  for(const [id,label] of TABS){
+    const a=el("a",id===state.tab?"on":null,label);
+    a.href="#/"+id;
+    nav.appendChild(a);
+  }
+}
+
+async function render(){
+  buildNav();
+  const view=document.getElementById("view");
+  view.innerHTML='<div class="empty">Loading…</div>';
+  const fn=RENDERERS[state.tab]||renderDashboard;
+  try {
+    const fresh=el("div");
+    await fn(fresh);
+    view.replaceChildren(...fresh.childNodes);
+  } catch(e){
+    view.innerHTML='<div class="empty">Could not load this page ('+
+      esc(e.message||e)+').</div>';
+  }
+  document.getElementById("updated").textContent=
+    "updated "+new Date().toLocaleTimeString();
+  document.getElementById("footer").textContent=
+    "Polls every "+(state.meta.poll_interval||1)+" min · "+
+    "click any server for full history · dashboard auto-refreshes";
+  clearTimeout(refreshTimer);
+  if(state.tab==="dashboard")
+    refreshTimer=setTimeout(render,60000);
+}
+
+function route(){
+  const h=(location.hash||"").replace(/^#\/?/,"");
+  state.tab=RENDERERS[h]?h:"dashboard";
+  render();
+}
+
+window.addEventListener("hashchange",route);
+document.getElementById("modal").onclick=e=>{
+  if(e.target.id==="modal") e.target.classList.remove("show"); };
+document.addEventListener("keydown",e=>{
+  if(e.key==="Escape") document.getElementById("modal").classList.remove("show"); });
+
+(async function init(){
+  try {
+    state.meta=await getJSON("/api/meta");
+    if(state.meta.title){
+      document.getElementById("title").textContent=state.meta.title;
+      document.title=state.meta.title;
+    }
+  } catch(e){}
+  route();
+})();
+</script>
+</body>
+</html>

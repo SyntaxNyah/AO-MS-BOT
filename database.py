@@ -306,6 +306,55 @@ def anomaly_counts(since=None):
                 for r in c.execute(q, params).fetchall()}
 
 
+def query_anomalies(server_key=None, type_=None, severity=None,
+                    since=None, limit=500):
+    """Flexible anomaly search for the web dashboard, newest-first."""
+    q = "SELECT * FROM anomalies WHERE 1=1"
+    params = []
+    if server_key:
+        q += " AND server_key=?"
+        params.append(server_key)
+    if type_:
+        q += " AND type=?"
+        params.append(type_)
+    if severity:
+        q += " AND severity=?"
+        params.append(severity)
+    if since is not None:
+        q += " AND ts>=?"
+        params.append(since)
+    q += " ORDER BY id DESC LIMIT ?"
+    params.append(limit)
+    with _db() as c:
+        return c.execute(q, params).fetchall()
+
+
+def anomaly_type_counts(since=None):
+    """How many anomalies of each type exist, as {type: count}."""
+    q = "SELECT type, COUNT(*) n FROM anomalies"
+    params = []
+    if since is not None:
+        q += " WHERE ts>=?"
+        params.append(since)
+    q += " GROUP BY type ORDER BY n DESC"
+    with _db() as c:
+        return {r["type"]: r["n"] for r in c.execute(q, params).fetchall()}
+
+
+def integrity_counts(since=None):
+    """Per-server count of HB-integrity anomalies, keyed by server_key."""
+    q = ("SELECT server_key, COUNT(*) n FROM anomalies "
+         "WHERE type IN ('hb_drop','hb_jump','hb_reset')")
+    params = []
+    if since is not None:
+        q += " AND ts>=?"
+        params.append(since)
+    q += " GROUP BY server_key"
+    with _db() as c:
+        return {r["server_key"]: r["n"]
+                for r in c.execute(q, params).fetchall()}
+
+
 # --- stats ---
 
 def stats():
