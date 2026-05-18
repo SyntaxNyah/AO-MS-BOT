@@ -1,6 +1,6 @@
 # AO-MS-BOT
 
-A Discord bot that tracks the [Attorney Online master server list](https://servers.aceattorneyonline.com/servers).
+A Discord bot that tracks the [Attorney Online master server list](https://servers.aceattorneyonline.com/servers). and [Umineko Online AO master server list](https://servers.umineko.online/servers).
 
 It answers `/list` on demand, and in the background it polls the master server
 every minute, saving a full snapshot of every server. Over time this builds a
