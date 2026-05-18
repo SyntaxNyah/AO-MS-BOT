@@ -91,4 +91,4 @@ WEBSITE_ENABLED = _bool("WEBSITE_ENABLED", False)
 WEBSITE_HOST = _str("WEBSITE_HOST", "0.0.0.0")
 WEBSITE_PORT = _int("WEBSITE_PORT", 8080)
 # Shown in the dashboard header -- name it whatever you like.
-WEBSITE_TITLE = _str("WEBSITE_TITLE", "AO-MS-BOT Dashboard")
+WEBSITE_TITLE = _str("WEBSITE_TITLE", "SyntaxNyah AO Dashboard")
