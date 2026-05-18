@@ -132,6 +132,7 @@ genuine restarts, offline/return cycles) are drawn faint. It has two views:
 | `/compare [period]` | Ultimate statistician: compare every server's player counts, uptime and peak/mean stats together |
 | `/hblist [view] [period]` | HB-counter overview for every server with tampering flagged in bold red; `view` is paged (Prev/Next buttons) or global (all servers on one graph) |
 | `/anomalies [count] [alerts_only]` | Show recently detected anomalies |
+| `/deadservers` | List servers absent from the master list for `DEAD_SERVER_DAYS`+ days (default 60), treated as shut down; history is kept and a server that returns drops off the list |
 | `/stats` | Monitoring statistics (polls, snapshots, uptime) |
 | `/poll` | Run a master-server poll immediately |
 
