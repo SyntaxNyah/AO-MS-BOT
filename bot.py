@@ -74,6 +74,20 @@ async def on_ready():
     log.info("logged in as %s (id %s)", bot.user, bot.user.id)
 
 
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error):
+    """Surface command failures instead of leaving the reply spinning forever."""
+    log.exception("slash command error: %s", error)
+    msg = f"Something went wrong running that command: `{error}`"
+    try:
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except discord.DiscordException:
+        pass
+
+
 # --------------------------------------------------------------------------
 # Background polling
 # --------------------------------------------------------------------------
@@ -540,7 +554,7 @@ async def compare_cmd(interaction: discord.Interaction,
 
     # Group every server into a reliability tier so none is left unranked,
     # then list them tier by tier (busiest first within each tier).
-    by_tier = {name: [] for name, _ in _RELIABILITY_TIERS}
+    by_tier = {name: [] for name, _, _ in _RELIABILITY_TIERS}
     for s in servers:
         for tname, lo, hi in _RELIABILITY_TIERS:
             if lo <= s["uptime"] <= hi:
