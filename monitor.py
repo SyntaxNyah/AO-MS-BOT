@@ -1,4 +1,5 @@
 """Fetches the master server list and turns each poll into stored history."""
+import asyncio
 import logging
 from datetime import datetime, timezone
 
@@ -6,7 +7,7 @@ import aiohttp
 
 import database as db
 from anomaly import analyze_hb, analyze_players
-from config import (BOT_BASELINE_WINDOW, MS_URL, POLL_INTERVAL_MINUTES,
+from config import (BOT_BASELINE_WINDOW, MS_URLS, POLL_INTERVAL_MINUTES,
                     RELIABLE_GAP_FACTOR)
 
 log = logging.getLogger("monitor")
@@ -23,13 +24,12 @@ def clean_ip(ip):
     return ip
 
 
-async def fetch_servers(timeout=20):
-    """Return the current master server list as a list of normalised dicts."""
-    async with aiohttp.ClientSession() as session:
-        async with session.get(
-                MS_URL, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
-            resp.raise_for_status()
-            data = await resp.json(content_type=None)
+async def _fetch_one(session, url, timeout):
+    """Fetch and normalise a single master server's list."""
+    async with session.get(
+            url, timeout=aiohttp.ClientTimeout(total=timeout)) as resp:
+        resp.raise_for_status()
+        data = await resp.json(content_type=None)
 
     out = []
     for s in data:
@@ -49,8 +49,37 @@ async def fetch_servers(timeout=20):
             "hbcounter": int(hb) if hb is not None else None,
             "ws_port": _opt_port(s.get("ws_port")),
             "wss_port": _opt_port(s.get("wss_port")),
+            "source": url,
         })
     return out
+
+
+async def fetch_servers(timeout=20):
+    """Return the current server list, merged across all configured masters.
+
+    Every master in MS_URLS is polled concurrently and the results are merged,
+    deduplicated by ip:port (the first master to list a server wins). Masters
+    that fail are skipped and logged; only if *every* master fails does this
+    raise, so one dead master never blacks out the others.
+    """
+    async with aiohttp.ClientSession() as session:
+        results = await asyncio.gather(
+            *(_fetch_one(session, url, timeout) for url in MS_URLS),
+            return_exceptions=True)
+
+    merged = {}
+    errors = []
+    for url, res in zip(MS_URLS, results):
+        if isinstance(res, Exception):
+            errors.append((url, res))
+            log.warning("master server fetch failed (%s): %s", url, res)
+            continue
+        for s in res:
+            merged.setdefault(server_key(s), s)
+
+    if errors and len(errors) == len(MS_URLS):
+        raise errors[0][1]
+    return list(merged.values())
 
 
 def _opt_port(value):
@@ -103,7 +132,7 @@ async def run_poll():
 
         if existing is None:
             db.upsert_server(key, s["ip"], s["port"], s["name"], now_iso,
-                             s["ws_port"], s["wss_port"])
+                             s["ws_port"], s["wss_port"], s["source"])
             anomalies.append(_mk(now_iso, key, s["name"], "new_server", "info",
                                  "New server appeared on the master list."))
         else:
@@ -115,7 +144,7 @@ async def run_poll():
                                      f"Renamed: '{existing['name']}' -> "
                                      f"'{s['name']}'."))
             db.touch_server(key, s["name"], now_iso,
-                            s["ws_port"], s["wss_port"])
+                            s["ws_port"], s["wss_port"], s["source"])
 
         if prev_snap is not None and s["hbcounter"] is not None:
             gap = (now - datetime.fromisoformat(prev_snap["ts"])).total_seconds() / 60.0

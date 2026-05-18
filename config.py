@@ -24,6 +24,18 @@ def _bool(name, default):
     return raw in ("1", "true", "yes", "on", "y")
 
 
+def _list(name, default):
+    """Parse a comma/newline-separated list, dropping blanks and duplicates."""
+    raw = os.getenv(name) or ""
+    seen, out = set(), []
+    for item in re.split(r"[,\n]", raw):
+        item = item.strip()
+        if item and item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out or default
+
+
 # --- Discord ---
 DISCORD_TOKEN = _str("DISCORD_TOKEN", "")
 GUILD_ID = _int("GUILD_ID", 0)
@@ -31,7 +43,12 @@ EVENTS_CHANNEL_ID = _int("EVENTS_CHANNEL_ID", 0)
 INTEGRITY_CHANNEL_ID = _int("INTEGRITY_CHANNEL_ID", 0)
 
 # --- Master server polling ---
-MS_URL = _str("MS_URL", "https://servers.aceattorneyonline.com/servers")
+# One or more master-server list endpoints. Set MS_URL to a single URL, or to
+# several URLs separated by commas (or newlines) to poll multiple masters at
+# once -- their server lists are merged, deduplicated by ip:port.
+MS_URLS = _list("MS_URL", ["https://servers.aceattorneyonline.com/servers"])
+# First configured master; kept for callers/displays that expect a single URL.
+MS_URL = MS_URLS[0]
 POLL_INTERVAL_MINUTES = _int("POLL_INTERVAL_MINUTES", 1)
 
 # --- Dead-server detection ---

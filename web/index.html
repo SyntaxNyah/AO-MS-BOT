@@ -35,6 +35,8 @@
     font-size:12px; cursor:pointer; }
   .periods button.on { background:var(--accent); color:#0d1117;
     border-color:var(--accent); font-weight:600; }
+  .periods.masters { margin-top:0; align-items:center; }
+  .masters-lbl { color:var(--dim); font-size:12px; margin-right:2px; }
   .stats { display:grid; gap:13px; margin:18px 0;
     grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); }
   .stat { background:var(--panel); border:1px solid var(--line);
@@ -212,7 +214,7 @@ const PALETTE = ["#7c9cff","#41c97a","#e8a13a","#f0524b","#a472f0","#3fc8d4",
   "#4fb0e0","#e0726b","#7ad48f"];
 
 const state = { tab:"dashboard", period:"all", meta:{}, sort:{},
-                 compareSel:[] };
+                 compareSel:[], master:"all" };
 let refreshTimer = null;
 
 // ---- tiny helpers --------------------------------------------------------
@@ -457,6 +459,31 @@ function periodBar(){
   }
   return box;
 }
+// Short, human label for a master-server URL (its host, sans scheme/path).
+function masterLabel(url){
+  try { return new URL(url).host; }
+  catch(e){ return String(url||"").replace(/^https?:\/\//,"").split("/")[0]; }
+}
+// A button bar to swap which master server's list is shown. Only meaningful
+// when more than one master is configured, so it returns null otherwise.
+function masterBar(){
+  const urls=state.meta.ms_urls||[];
+  if(urls.length<2) return null;
+  const box=el("div","periods masters");
+  box.appendChild(el("span","masters-lbl","Master:"));
+  const opts=[["all","All"]].concat(urls.map(u=>[u,masterLabel(u)]));
+  for(const [v,l] of opts){
+    const b=el("button",v===state.master?"on":"",l);
+    if(v!=="all") b.title=v;
+    b.onclick=()=>{ state.master=v; render(); };
+    box.appendChild(b);
+  }
+  return box;
+}
+// True when a server row passes the current master filter.
+function masterMatch(r){
+  return state.master==="all" || r.source===state.master;
+}
 function card(titleNode){
   const c=el("div","card");
   if(titleNode){ const h=el("h2"); if(typeof titleNode==="string")
@@ -560,6 +587,7 @@ async function renderDashboard(view){
   const d=await getJSON("/api/overview?period="+state.period);
   d.stats.last_players=d.players.length?d.players[d.players.length-1].p:0;
   view.appendChild(periodBar());
+  const dmb=masterBar(); if(dmb) view.appendChild(dmb);
   view.appendChild(statGrid(d.stats));
 
   const pc=card("Global player count");
@@ -571,8 +599,9 @@ async function renderDashboard(view){
 
   const g=el("div","grid2");
   const sc=card("Servers right now");
-  sc.querySelector("h2").appendChild(el("span","sub",d.servers.length+" online"));
-  if(!d.servers.length) sc.appendChild(el("div","empty","No servers online."));
+  const dashSrv=d.servers.filter(masterMatch);
+  sc.querySelector("h2").appendChild(el("span","sub",dashSrv.length+" online"));
+  if(!dashSrv.length) sc.appendChild(el("div","empty","No servers online."));
   else sc.appendChild(sortTable(
     [{key:"name",label:"Server",cell:r=>{const a=el("a",null,r.name);
         a.onclick=()=>openServer(r.key);return a;}},
@@ -581,7 +610,7 @@ async function renderDashboard(view){
      {key:"status",label:"Status",cell:r=>statusPill(r.status)},
      {key:"join",label:"Join",sortable:false,
         cell:r=>joinLink(r.webao,r.name)}],
-    d.servers,"dash-srv",r=>openServer(r.key)));
+    dashSrv,"dash-srv",r=>openServer(r.key)));
   g.appendChild(sc);
 
   const ac=card("Recent anomalies");
@@ -596,11 +625,13 @@ let serverSearch="";
 async function renderServers(view){
   const d=await getJSON("/api/servers?period="+state.period);
   view.appendChild(periodBar());
+  const smb=masterBar(); if(smb) view.appendChild(smb);
   view.appendChild(exportBar("servers"));
 
+  const allSrv=d.servers.filter(masterMatch);
   const c=card("Every tracked server");
   c.querySelector("h2").appendChild(
-    el("span","sub",d.servers.length+" servers · "+d.polls+" polls"));
+    el("span","sub",allSrv.length+" servers · "+d.polls+" polls"));
   const fil=el("div","filters");
   const inp=el("input","search"); inp.type="search";
   inp.placeholder="Search servers by name or address…";
@@ -612,7 +643,7 @@ async function renderServers(view){
 
   function buildTable(){
     const q=serverSearch.trim().toLowerCase();
-    let rows=d.servers;
+    let rows=allSrv;
     if(q) rows=rows.filter(r=>(r.name||"").toLowerCase().includes(q)||
       (r.key||"").toLowerCase().includes(q));
     if(!rows.length) return el("div","empty","No servers match your search.");
@@ -639,7 +670,7 @@ async function renderServers(view){
   c.appendChild(list);
   view.appendChild(c);
 
-  const top=d.servers.slice().sort((a,b)=>b.peak-a.peak).slice(0,15);
+  const top=allSrv.slice().sort((a,b)=>b.peak-a.peak).slice(0,15);
   const rc=card("Top 15 servers by peak players");
   rc.appendChild(rankChart({items:top.map((s,i)=>({label:s.name,
     value:s.peak,color:PALETTE[i%PALETTE.length]}))}));

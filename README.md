@@ -11,6 +11,9 @@ bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
 
 - `/list` &mdash; the current server list, on demand
 - Automatic polling every minute (configurable)
+- Poll one master server or **several at once** &mdash; the lists are merged,
+  a failing master never blacks out the others, and the dashboard can filter
+  the view by master
 - A poll summary posted to your events channel after every poll
 - Full historical database (SQLite) &mdash; every server, every poll
 - Plain-text event log (`data/events.log`) &mdash; a running notepad of everything that happened
@@ -252,7 +255,9 @@ a full dashboard with a tab for everything the bot tracks:
   live anomaly feed
 - **Servers** &mdash; every server ever tracked in one searchable, sortable
   table (players, peak, mean, uptime %, snapshots, anomalies&hellip;), plus a
-  top-15 peak-players ranking
+  top-15 peak-players ranking. When more than one master is configured, a
+  **Master** toggle here (and on the Dashboard) switches which master's
+  server list you are viewing
 - **Players** &mdash; the global player count as a continuous trend *and* a
   per-day peak/average/low breakdown, for both players and servers online
 - **Activity** &mdash; a busiest-times heatmap showing average players by
@@ -278,6 +283,47 @@ never polls or posts anything.
 It refreshes itself every 60 seconds. If you expose it to the internet, put it
 behind a reverse proxy (nginx, Caddy) for HTTPS, or keep `WEBSITE_HOST` on
 `127.0.0.1` and tunnel in over SSH.
+
+## Polling multiple master servers
+
+`MS_URL` normally points at a single master-server list, but it accepts
+**several endpoints at once**. List them separated by commas (or one per line)
+and the bot polls them all:
+
+```bash
+# One master (the default):
+MS_URL=https://servers.aceattorneyonline.com/servers
+
+# Two or more masters:
+MS_URL=https://servers.aceattorneyonline.com/servers,https://newmasterserverlist.com/servers
+```
+
+How it behaves:
+
+- **Every master is polled together**, once per `POLL_INTERVAL_MINUTES`. The
+  requests run concurrently, so adding masters does not slow polling down.
+- **The lists are merged** into one combined view. A server is identified by
+  its `ip:port`, so if the same server appears on two masters it is counted
+  once; the first master in the list "wins" as its recorded source.
+- **A failing master never blacks out the others.** If one master is
+  unreachable it is skipped and logged, and the poll still succeeds on
+  whatever the reachable masters returned. A poll only counts as failed when
+  *every* master fails.
+- **Each server remembers which master listed it.** This is stored so the
+  dashboard can filter by master (see below).
+
+### Switching masters on the dashboard
+
+When two or more masters are configured, the web dashboard shows a **Master**
+toggle on the **Dashboard** and **Servers** pages. It is a row of buttons:
+`All` plus one button per master (labelled by its host name). Click a button
+to swap the server list to just that master's servers; `All` shows the merged
+list. The toggle is hidden when only one master is configured, so a normal
+single-master setup is unaffected.
+
+The toggle filters the server-list views. Aggregate pages (Players, Compare,
+HB Counter, Activity, Records) still show combined data across every master,
+since those charts span the whole tracked history.
 
 ## Updating the bot
 
@@ -335,7 +381,12 @@ Nothing in this bot is hard-wired to the official Attorney Online
 infrastructure. It talks to two endpoints, and both are plain config values:
 
 - `MS_URL` &mdash; the master server list it polls (default
-  `https://servers.aceattorneyonline.com/servers`)
+  `https://servers.aceattorneyonline.com/servers`). List several URLs separated
+  by commas to poll **more than one master at once** &mdash; their server lists
+  are merged and deduplicated by `ip:port`, and an unreachable master is skipped
+  without blacking out the others. When two or more masters are configured, the
+  web dashboard shows a **Master** toggle on the Dashboard and Servers pages so
+  you can switch which master's server list you are looking at.
 - `WEBAO_CLIENT` &mdash; the WebAO client host used to build join links
   (default `webao.miku.pizza/client.html`)
 
