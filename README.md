@@ -23,6 +23,10 @@ bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
   counts, uptime and peak/mean stats
 - Servers are tracked by their `ip:port` address, so two servers sharing a
   display name never collide &mdash; and they can be looked up by address
+- Optional live **web dashboard** &mdash; flip one config switch and the bot
+  also serves a full browser portal: every server, every graph, player-count
+  trends, daily breakdowns, server comparisons, HB-counter tampering and a
+  filterable anomaly browser, all updating live
 
 ## How it works
 
@@ -221,6 +225,56 @@ source .venv/bin/activate && python bot.py
 ```
 
 Detach with `Ctrl+A` then `D`. Reattach later with `screen -r aobot`.
+
+## The web dashboard (optional)
+
+The bot can also run a live web dashboard &mdash; the same data the Discord
+commands show, but in a browser, with no Discord needed to look at it. It runs
+inside the same process and reads the same database, so there is nothing
+extra to start.
+
+Turn it on in your `.env`:
+
+```bash
+WEBSITE_ENABLED=1
+WEBSITE_HOST=0.0.0.0     # 0.0.0.0 = reachable from other machines; 127.0.0.1 = local only
+WEBSITE_PORT=8080
+WEBSITE_TITLE=My AO Dashboard
+```
+
+Restart the bot, then open `http://YOUR-SERVER-IP:8080` in any browser. It is
+a full dashboard with a tab for everything the bot tracks:
+
+- **Dashboard** &mdash; headline stats, the global player-count chart and a
+  live anomaly feed
+- **Servers** &mdash; every server ever tracked in one searchable, sortable
+  table (players, peak, mean, uptime %, snapshots, anomalies&hellip;), plus a
+  top-15 peak-players ranking
+- **Players** &mdash; the global player count as a continuous trend *and* a
+  per-day peak/average/low breakdown, for both players and servers online
+- **Activity** &mdash; a busiest-times heatmap showing average players by
+  hour of day and day of week
+- **Compare** &mdash; hand-pick any servers (or use the auto busiest dozen)
+  to overlay on one graph, reliability tiers, and an uptime ranking
+- **HB Counter** &mdash; every server's heartbeat counter on one graph with
+  suspected tampering flagged red, plus a per-server status table
+- **Anomalies** &mdash; a filterable browser (by type, severity and time
+  range) with an anomalies-by-type chart
+- **Records** &mdash; all-time milestones: highest player count, busiest day,
+  biggest server, most data collected and more
+- **Dead Servers** &mdash; servers absent long enough to be considered shut down
+
+Every chart has hover tooltips, every period can be filtered to
+day/week/month/year/all, and clicking any server anywhere opens a detail
+view with an uptime timeline (online/offline strip with outages), player
+history, HB-counter history, daily breakdown and anomalies. Most tabs have
+CSV/JSON export buttons, and server and compare
+views have shareable links. The dashboard is strictly read-only &mdash; it
+never polls or posts anything.
+
+It refreshes itself every 60 seconds. If you expose it to the internet, put it
+behind a reverse proxy (nginx, Caddy) for HTTPS, or keep `WEBSITE_HOST` on
+`127.0.0.1` and tunnel in over SSH.
 
 ## Updating the bot
 

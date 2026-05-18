@@ -15,6 +15,13 @@ def _str(name, default):
     return (os.getenv(name) or "").strip() or default
 
 
+def _bool(name, default):
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw in ("1", "true", "yes", "on", "y")
+
+
 # --- Discord ---
 DISCORD_TOKEN = _str("DISCORD_TOKEN", "")
 GUILD_ID = _int("GUILD_ID", 0)
@@ -74,3 +81,14 @@ BOT_SPIKE_MAX = 100       # players: high end of the typical bot-fill band
 BOT_BASELINE_MAX = 8      # a server averaging at/under this is "normally empty"
 BOT_SPIKE_POLLS = 2       # the burst must appear within this many polls
 BOT_BASELINE_WINDOW = 30  # how many recent snapshots define the baseline
+
+# --- Website / live dashboard ---
+# Set WEBSITE_ENABLED=1 to also serve a live web dashboard alongside the bot.
+# It runs in the same process, reads the same database, and shows every
+# server, the global player count, anomalies and per-server history -- so the
+# bot's whole world is browsable in a web page, no Discord needed.
+WEBSITE_ENABLED = _bool("WEBSITE_ENABLED", False)
+WEBSITE_HOST = _str("WEBSITE_HOST", "0.0.0.0")
+WEBSITE_PORT = _int("WEBSITE_PORT", 8080)
+# Shown in the dashboard header -- name it whatever you like.
+WEBSITE_TITLE = _str("WEBSITE_TITLE", "AO-MS-BOT Dashboard")
