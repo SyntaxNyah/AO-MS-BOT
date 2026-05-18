@@ -187,9 +187,12 @@ const TABS = [
   ["dashboard","Dashboard"], ["servers","Servers"], ["players","Players"],
   ["activity","Activity"], ["compare","Compare"], ["hb","HB Counter"],
   ["anomalies","Anomalies"], ["records","Records"], ["dead","Dead Servers"],
-  ["credits","Credits"],
+  ["ms","Master Server"], ["credits","Credits"],
 ];
 const REPO_URL="https://github.com/SyntaxNyah/AO-MS-BOT";
+const MS_REPO_URL="https://github.com/SyntaxNyah/Nyan-AO-Master-Server";
+const LEMMYAO_URL="https://github.com/SyntaxNyah/LemmyAO";
+const WEBAO_UPSTREAM_URL="https://github.com/AttorneyOnline/webAO";
 // WebAO "join in browser" link. `url` is built by the backend from the
 // server's websocket port (null when the server publishes no ws/wss port).
 function joinLink(url,name,extraCls){
@@ -683,15 +686,51 @@ async function renderPlayers(view){
   view.appendChild(periodBar());
   view.appendChild(exportBar("players"));
 
+  // Per-master breakdown: when more than one master is polled, overlay one
+  // line per master alongside the combined total so they stay separate.
+  const masters=(d.by_master||[]).filter(m=>m.trend&&m.trend.length);
+  const multi=masters.length>1;
+  const MPAL=["var(--purple)","var(--orange)","var(--red)"];
+
+  function trendSeries(key,allName,allColor){
+    const s=[{name:allName,color:allColor,
+      points:d.trend.map(p=>[ms(p.t),p[key]])}];
+    if(multi) masters.forEach((m,i)=>s.push({
+      name:masterLabel(m.source||"unknown"),
+      color:MPAL[i%MPAL.length],
+      points:m.trend.map(p=>[ms(p.t),p[key]])}));
+    return s;
+  }
+  function masterLegend(allColor){
+    const lg=el("div");
+    lg.style.cssText="display:flex;gap:14px;flex-wrap:wrap;margin-top:8px;"+
+      "font-size:12px;color:var(--dim)";
+    function item(color,label){
+      const it=el("span");
+      it.style.cssText="display:inline-flex;align-items:center;gap:5px";
+      const sw=el("span");
+      sw.style.cssText="width:10px;height:10px;border-radius:2px;"+
+        "display:inline-block;background:"+color;
+      it.appendChild(sw); it.appendChild(document.createTextNode(label));
+      return it;
+    }
+    lg.appendChild(item(allColor,"All masters"));
+    masters.forEach((m,i)=>lg.appendChild(
+      item(MPAL[i%MPAL.length],masterLabel(m.source||"unknown"))));
+    return lg;
+  }
+
   const tc=card("Player count — continuous trend");
   tc.querySelector("h2").appendChild(el("span","sub",d.polls+" polls"));
-  tc.appendChild(lineChart({series:[{name:"Players",color:"var(--green)",
-    points:d.trend.map(p=>[ms(p.t),p.p])}],area:true,height:340}));
+  tc.appendChild(lineChart({series:trendSeries("p","Players","var(--green)"),
+    area:!multi,height:340}));
+  if(multi) tc.appendChild(masterLegend("var(--green)"));
   view.appendChild(tc);
 
   const sc=card("Servers online — continuous trend");
-  sc.appendChild(lineChart({series:[{name:"Servers",color:"var(--blue)",
-    points:d.trend.map(p=>[ms(p.t),p.s])}],area:true,height:240}));
+  sc.appendChild(lineChart({series:trendSeries("s","Servers","var(--blue)"),
+    area:!multi,height:240}));
+  if(multi) sc.appendChild(masterLegend("var(--blue)"));
   view.appendChild(sc);
 
   const dc=card("Daily peak / average / low — players");
@@ -1125,11 +1164,86 @@ async function renderCredits(view){
   view.appendChild(c);
 }
 
+// ---- tab: master server --------------------------------------------------
+async function renderMS(view){
+  function extLink(text,href){
+    const a=el("a",null,text);
+    a.href=href; a.target="_blank"; a.rel="noopener";
+    return a;
+  }
+
+  const c=card("Open-source master server");
+  const intro=el("p",null,
+    "This dashboard does not only watch the official Attorney Online "+
+    "master server — it also polls our own open-source master server. "+
+    "It is free for anyone to use, and fully self-hostable. If you run an "+
+    "AO server, you can list it here.");
+  intro.style.color="var(--dim)";
+  intro.style.fontSize="13px";
+  intro.style.marginBottom="14px";
+  c.appendChild(intro);
+
+  const g=el("div","recgrid");
+  function add(label,valNode,sub){
+    const r=el("div","rec");
+    r.appendChild(el("div","rl",label));
+    const v=el("div","rv");
+    if(valNode instanceof Node) v.appendChild(valNode); else v.textContent=valNode;
+    v.style.fontSize="17px";
+    v.style.wordBreak="break-word";
+    r.appendChild(v);
+    if(sub) r.appendChild(el("div","rs",sub));
+    g.appendChild(r);
+  }
+
+  add("Master list",extLink("servers.umineko.online","https://servers.umineko.online/servers"),
+    "our open master-server list — polled by this dashboard alongside the "+
+    "official Attorney Online list");
+
+  add("Source code",extLink("github.com/SyntaxNyah/Nyan-AO-Master-Server",MS_REPO_URL),
+    "Nyan-AO-Master-Server — our open-source Python master server. "+
+    "Self-host your own, or use ours");
+
+  add("List your server","Point your heartbeat at us",
+    "set your AO server's masterserver host to servers.umineko.online and "+
+    "it will appear on this dashboard automatically");
+
+  add("Open-source WebAO",extLink("github.com/SyntaxNyah/LemmyAO",LEMMYAO_URL),
+    "LemmyAO — our maintained fork of WebAO, the browser client behind the "+
+    "▶ Join buttons. Based on the upstream AttorneyOnline/webAO project");
+
+  c.appendChild(g);
+
+  const credit=el("p");
+  credit.appendChild(document.createTextNode(
+    "WebAO is the browser client for Attorney Online — full credit to the upstream "));
+  credit.appendChild(extLink("AttorneyOnline/webAO",WEBAO_UPSTREAM_URL));
+  credit.appendChild(document.createTextNode(
+    " project and its authors. LemmyAO is our maintained fork."));
+  credit.style.color="var(--dim)";
+  credit.style.fontSize="12px";
+  credit.style.marginTop="14px";
+  c.appendChild(credit);
+
+  const cta=el("p");
+  cta.style.marginTop="14px";
+  const b1=el("a","expbtn","↗ Master server on GitHub");
+  b1.href=MS_REPO_URL; b1.target="_blank"; b1.rel="noopener";
+  const b2=el("a","expbtn","↗ LemmyAO (WebAO) on GitHub");
+  b2.href=LEMMYAO_URL; b2.target="_blank"; b2.rel="noopener";
+  b2.style.marginLeft="8px";
+  cta.appendChild(b1);
+  cta.appendChild(b2);
+  c.appendChild(cta);
+
+  view.appendChild(c);
+}
+
 // ---- router --------------------------------------------------------------
 const RENDERERS={dashboard:renderDashboard,servers:renderServers,
   players:renderPlayers,activity:renderActivity,compare:renderCompare,
   hb:renderHB,anomalies:renderAnomalies,records:renderRecords,
-  dead:renderDead,credits:renderCredits};
+  dead:renderDead,ms:renderMS,credits:renderCredits};
 
 function buildNav(){
   const nav=document.getElementById("nav");

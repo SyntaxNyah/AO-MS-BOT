@@ -241,8 +241,23 @@ async def api_players(request):
     trend = [{"t": r["ts"], "p": r["player_count"] or 0,
               "s": r["server_count"] or 0}
              for r in _downsample(valid, 900)]
+
+    # Per-master breakdown: one trend per master server, kept separate so the
+    # combined line never blurs which master contributed what.
+    src_rows = await asyncio.to_thread(db.poll_source_history, since)
+    grouped = {}
+    for r in src_rows:
+        grouped.setdefault(r["source"], []).append(r)
+    by_master = [
+        {"source": src,
+         "trend": [{"t": x["ts"], "p": x["player_count"] or 0,
+                    "s": x["server_count"] or 0}
+                   for x in _downsample(rows, 900)]}
+        for src, rows in grouped.items()]
+
     return web.json_response({
         "trend": trend,
+        "by_master": by_master,
         "daily": _daily(valid, "ts", "player_count"),
         "daily_servers": _daily(valid, "ts", "server_count"),
         "polls": len(polls),

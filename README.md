@@ -11,9 +11,10 @@ bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
 
 - `/list` &mdash; the current server list, on demand
 - Automatic polling every minute (configurable)
-- Poll one master server or **several at once** &mdash; the lists are merged,
-  a failing master never blacks out the others, and the dashboard can filter
-  the view by master
+- Polls **two master servers by default** &mdash; the official Attorney Online
+  list and our open-source master server &mdash; or any number you configure;
+  the lists are merged, a failing master never blacks out the others, each
+  master's stats are kept separate, and the dashboard can filter by master
 - A poll summary posted to your events channel after every poll
 - Full historical database (SQLite) &mdash; every server, every poll
 - Plain-text event log (`data/events.log`) &mdash; a running notepad of everything that happened
@@ -271,6 +272,9 @@ a full dashboard with a tab for everything the bot tracks:
 - **Records** &mdash; all-time milestones: highest player count, busiest day,
   biggest server, most data collected and more
 - **Dead Servers** &mdash; servers absent long enough to be considered shut down
+- **Master Server** &mdash; about our open-source master server and how to
+  list your own AO server on it, with links to the master server and WebAO
+  source code
 
 Every chart has hover tooltips, every period can be filtered to
 day/week/month/year/all, and clicking any server anywhere opens a detail
@@ -286,16 +290,18 @@ behind a reverse proxy (nginx, Caddy) for HTTPS, or keep `WEBSITE_HOST` on
 
 ## Polling multiple master servers
 
-`MS_URL` normally points at a single master-server list, but it accepts
-**several endpoints at once**. List them separated by commas (or one per line)
-and the bot polls them all:
+`MS_URL` accepts **several endpoints at once** &mdash; list them separated by
+commas (or one per line) and the bot polls them all. **By default it polls
+two masters:** the official Attorney Online list and our open-source master
+server (`servers.umineko.online`, see
+[Setting up your own master server](#setting-up-your-own-master-server)).
 
 ```bash
-# One master (the default):
-MS_URL=https://servers.aceattorneyonline.com/servers
+# The default -- the official master plus our open-source one:
+MS_URL=https://servers.aceattorneyonline.com/servers,https://servers.umineko.online/servers
 
-# Two or more masters:
-MS_URL=https://servers.aceattorneyonline.com/servers,https://newmasterserverlist.com/servers
+# Just the official master:
+MS_URL=https://servers.aceattorneyonline.com/servers
 ```
 
 How it behaves:
@@ -311,6 +317,10 @@ How it behaves:
   *every* master fails.
 - **Each server remembers which master listed it.** This is stored so the
   dashboard can filter by master (see below).
+- **Each master's poll stats are kept separate.** Every poll records its
+  player and server counts per master, so the two never blur together &mdash;
+  the Players page draws one trend line per master alongside the combined
+  total.
 
 ### Switching masters on the dashboard
 
@@ -321,9 +331,12 @@ to swap the server list to just that master's servers; `All` shows the merged
 list. The toggle is hidden when only one master is configured, so a normal
 single-master setup is unaffected.
 
-The toggle filters the server-list views. Aggregate pages (Players, Compare,
-HB Counter, Activity, Records) still show combined data across every master,
-since those charts span the whole tracked history.
+The toggle filters the server-list views. The **Players** page additionally
+breaks its player-count and servers-online trends down per master &mdash; one
+line per master server next to the combined total &mdash; so each master's
+stats stay separate. Other aggregate pages (Compare, HB Counter, Activity,
+Records) still show combined data across every master, since those charts
+span the whole tracked history.
 
 ## Updating the bot
 
@@ -434,21 +447,50 @@ enough &mdash; the bot only ever does a `GET` and never writes back.
 
 ### Realistic ways to run your own
 
-1. **Run the real master server.** The official master server is not open source
-   ([AttorneyOnline/master](https://github.com/AttorneyOnline/master)). Host
-   it yourself, have your AO servers heartbeat to it, and set
-   `MS_URL=https://your-host/servers`. This is the closest to the real thing.
+1. **Run our open-source master server (recommended).** We maintain a
+   Python master server &mdash;
+   **[Nyan-AO-Master-Server](https://github.com/SyntaxNyah/Nyan-AO-Master-Server)**
+   &mdash; that you can host yourself. It accepts heartbeats from your AO
+   servers and publishes exactly the JSON array this bot expects. Follow the
+   setup instructions in that repository, then point the bot at it with
+   `MS_URL=https://your-host/servers`. See
+   [Setting up your own master server](#setting-up-your-own-master-server)
+   below.
 
-2. **Serve a static or generated JSON file.** If you only run a handful of
+2. **Run the official master server.** The official Attorney Online master
+   server is not open source
+   ([AttorneyOnline/master](https://github.com/AttorneyOnline/master)). If you
+   have access to it you can host it yourself and set `MS_URL` the same way.
+
+3. **Serve a static or generated JSON file.** If you only run a handful of
    servers and do not need real heartbeating, you can publish the array above
    as a static file (or generate it from your own script/cron) and point
    `MS_URL` at it. The bot does not care how the JSON is produced, only that
    it is current when polled &mdash; `POLL_INTERVAL_MINUTES` controls how often.
 
-3. **Proxy or filter the official list.** Point `MS_URL` at a small service
+4. **Proxy or filter the official list.** Point `MS_URL` at a small service
    of your own that fetches the official list and trims it to just your
    community's servers (or merges in extra ones). The bot then tracks exactly
    that curated set.
+
+### Setting up your own master server
+
+If you want a real, open-source master server rather than a static file or a
+proxy, use **[Nyan-AO-Master-Server](https://github.com/SyntaxNyah/Nyan-AO-Master-Server)**
+&mdash; our self-hostable Python master server. It accepts heartbeats from
+your Attorney Online servers and serves the JSON server list this bot polls,
+in exactly the shape described above.
+
+Full installation and configuration instructions live in the
+[Nyan-AO-Master-Server repository](https://github.com/SyntaxNyah/Nyan-AO-Master-Server).
+Once it is running, point the bot at it:
+
+```bash
+MS_URL=https://your-master-host/servers
+```
+
+Everything else &mdash; polling, history, anomaly detection, graphs and the
+dashboard &mdash; works against it unchanged.
 
 ### Running your own WebAO
 
