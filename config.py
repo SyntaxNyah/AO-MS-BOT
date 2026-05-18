@@ -50,3 +50,14 @@ HB_RESTART_WINDOW = 35
 # (the master list holds a dead entry ~30 min); a counter hitting the floor
 # faster than this never had time to actually restart -- likely a manual reset.
 HB_REAL_RESTART_MINUTES = 35
+
+# --- Player-count / bot-pattern analysis ---
+# A server that normally sits near-empty suddenly filling with players over a
+# poll or two looks like an automated bot fill, not organic traffic. A jump to
+# at least BOT_SPIKE_MIN players, within BOT_SPIKE_POLLS polls, on a server
+# whose baseline is at or below BOT_BASELINE_MAX, is flagged as a bot pattern.
+BOT_SPIKE_MIN = 40        # players: low end of a suspicious sudden burst
+BOT_SPIKE_MAX = 100       # players: high end of the typical bot-fill band
+BOT_BASELINE_MAX = 8      # a server averaging at/under this is "normally empty"
+BOT_SPIKE_POLLS = 2       # the burst must appear within this many polls
+BOT_BASELINE_WINDOW = 30  # how many recent snapshots define the baseline

@@ -10,6 +10,7 @@ from datetime import datetime
 
 import discord
 import matplotlib.dates as mdates
+from matplotlib import colormaps
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
@@ -20,11 +21,13 @@ from matplotlib.patches import Patch
 #   restarts  -- the counter reset because the server was restarted
 #   gone      -- the server dropped off the master list
 #   returned  -- the server came back onto the master list
+#   botspike  -- a sudden bot-like player burst on a near-empty server
 _DROP_TYPES = {"hb_drop", "hb_reset"}
 _ROLLOVER_TYPES = {"hb_rollover"}
 _RESTART_TYPES = {"hb_restart"}
 _GONE_TYPES = {"disappeared"}
 _RETURN_TYPES = {"reappeared"}
+_BOT_TYPES = {"bot_spike"}
 
 # Buckets to render at most; dense history is downsampled down to this.
 _TARGET_POINTS = 900
@@ -124,7 +127,7 @@ def make_hb_graph(name, rows, anomalies=None, addr=None):
     # Show the full counter value (49246) instead of matplotlib's +4.92e4 offset.
     ax1.ticklabel_format(axis="y", style="plain", useOffset=False)
 
-    drops = rollovers = restarts = gone = returned = 0
+    drops = rollovers = restarts = gone = returned = bot_spikes = 0
     if anomalies:
         for a in anomalies:
             try:
@@ -154,6 +157,9 @@ def make_hb_graph(name, rows, anomalies=None, addr=None):
                 for ax in (ax1, ax2):
                     ax.axvline(t, color="#41c97a", linewidth=1.2, alpha=0.75)
                 returned += 1
+            elif atype in _BOT_TYPES:
+                ax2.axvline(t, color="#d6336c", linewidth=1.3, alpha=0.8)
+                bot_spikes += 1
 
     legend = [
         Line2D([], [], color="#4f9dff", linewidth=1.6, label="HB counter"),
@@ -183,6 +189,10 @@ def make_hb_graph(name, rows, anomalies=None, addr=None):
     ax2.set_ylabel("Players")
     ax2.set_xlabel("Time (UTC)")
     ax2.grid(True, alpha=0.3)
+    if bot_spikes:
+        ax2.legend(handles=[Line2D([], [], color="#d6336c", linewidth=1.3,
+                                   label=f"suspected bot burst ({bot_spikes})")],
+                   loc="upper left", fontsize=8, framealpha=0.9)
 
     # Adaptive date axis: scales from minutes to years on its own.
     locator = mdates.AutoDateLocator(maxticks=10)
@@ -203,6 +213,7 @@ def make_hb_graph(name, rows, anomalies=None, addr=None):
                f"Rollovers: {rollovers}   Restarts: {restarts}   "
                f"Drops >35: {drops}\n"
                f"Went offline / came back: {gone} / {returned}\n"
+               f"Suspected bot bursts: {bot_spikes}\n"
                f"Players  peak {peak} / mean {mean:.1f}")
     ax1.text(0.99, 0.97, summary, transform=ax1.transAxes,
              ha="right", va="top", fontsize=8, family="monospace",
@@ -330,3 +341,129 @@ def make_player_graph(rows, label, view="trend"):
     fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
     buf.seek(0)
     return discord.File(buf, filename="playercount.png")
+
+
+def _downsample_xy(pts, target=_TARGET_POINTS):
+    """Collapse an oldest-first list of (datetime, value) into <= target points.
+
+    Each bucket keeps the mean value, enough to render a long trend line.
+    """
+    if len(pts) <= target:
+        return pts
+    start = pts[0][0].timestamp()
+    end = pts[-1][0].timestamp()
+    width = (end - start) / target or 1.0
+    buckets = {}
+    for t, v in pts:
+        idx = min(int((t.timestamp() - start) / width), target - 1)
+        buckets.setdefault(idx, []).append((t, v))
+    out = []
+    for idx in sorted(buckets):
+        group = buckets[idx]
+        out.append((group[len(group) // 2][0],
+                    sum(v for _, v in group) / len(group)))
+    return out
+
+
+def make_compare_graph(servers, label, poll_count):
+    """Build the all-server "Ultimate statistician" comparison PNG.
+
+    `servers` is a list of dicts, each with: name, key, history (oldest-first
+    list of (datetime, players)), uptime (0-100), peak, mean, anomalies,
+    alerts, bot_spikes. `poll_count` is the number of polls in the window.
+    """
+    ranked = sorted(servers, key=lambda s: (s["peak"], s["mean"]), reverse=True)
+    line_n = min(12, len(ranked))
+    bar_n = min(15, len(ranked))
+    line_servers = sorted(ranked[:line_n],
+                          key=lambda s: s["mean"], reverse=True)
+    bar_servers = ranked[:bar_n]
+
+    fig = Figure(figsize=(15, 16))
+    ax1, ax2, ax3 = fig.subplots(
+        3, 1, gridspec_kw={"height_ratios": [3, 2, 2]})
+    fig.suptitle("Attorney Online -- Ultimate server comparison",
+                 fontsize=15, fontweight="bold")
+
+    cmap = colormaps["tab20"]
+
+    # --- Player counts over time, one line per server ---
+    for i, s in enumerate(line_servers):
+        if len(s["history"]) < 2:
+            continue
+        pts = _downsample_xy(s["history"])
+        ax1.plot([t for t, _ in pts], [v for _, v in pts],
+                 color=cmap(i % 20), linewidth=1.5,
+                 label=f"{s['name'][:30]}  (peak {s['peak']})")
+    ax1.set_ylabel("Players online")
+    ax1.set_title("Player count over time", fontsize=11)
+    ax1.grid(True, alpha=0.3)
+    ax1.set_ylim(bottom=0)
+    if line_servers:
+        ax1.legend(loc="upper left", fontsize=8, framealpha=0.9, ncol=2)
+        locator = mdates.AutoDateLocator(maxticks=12)
+        ax1.xaxis.set_major_locator(locator)
+        ax1.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+        for lbl in ax1.get_xticklabels():
+            lbl.set_rotation(20)
+            lbl.set_horizontalalignment("right")
+
+    # --- Uptime ranking ---
+    up_sorted = sorted(bar_servers, key=lambda s: s["uptime"])
+    names = [s["name"][:32] for s in up_sorted]
+    ypos = range(len(up_sorted))
+    ax2.barh(list(ypos), [s["uptime"] for s in up_sorted], color="#4f9dff")
+    ax2.set_yticks(list(ypos))
+    ax2.set_yticklabels(names, fontsize=8)
+    ax2.set_xlabel("Uptime (% of polls seen on the master list)")
+    ax2.set_title("Server uptime", fontsize=11)
+    ax2.set_xlim(0, 100)
+    ax2.grid(True, axis="x", alpha=0.3)
+    for i, s in enumerate(up_sorted):
+        ax2.text(min(s["uptime"] + 1, 99), i, f"{s['uptime']:.1f}%",
+                 va="center", fontsize=7)
+
+    # --- Peak vs mean player ranking ---
+    pk_sorted = sorted(bar_servers, key=lambda s: s["peak"])
+    names = [s["name"][:32] for s in pk_sorted]
+    ypos = range(len(pk_sorted))
+    ax3.barh(list(ypos), [s["peak"] for s in pk_sorted], color="#41c97a",
+             label="peak players")
+    ax3.barh(list(ypos), [s["mean"] for s in pk_sorted], color="#2e9e5b",
+             height=0.45, label="mean players")
+    ax3.set_yticks(list(ypos))
+    ax3.set_yticklabels(names, fontsize=8)
+    ax3.set_xlabel("Players")
+    ax3.set_title("Peak and mean player count", fontsize=11)
+    ax3.grid(True, axis="x", alpha=0.3)
+    ax3.legend(loc="lower right", fontsize=8)
+    for i, s in enumerate(pk_sorted):
+        bot = f"  {s['bot_spikes']} bot" if s["bot_spikes"] else ""
+        ax3.text(s["peak"] + 0.5, i, f"{s['peak']}{bot}",
+                 va="center", fontsize=7)
+
+    # --- Statistician's summary box ---
+    total_peak = sum(s["peak"] for s in servers)
+    total_spikes = sum(s["bot_spikes"] for s in servers)
+    total_anom = sum(s["anomalies"] for s in servers)
+    busiest = ranked[0] if ranked else None
+    most_reliable = max(servers, key=lambda s: s["uptime"]) if servers else None
+    summary = (f"Range:   {label}\n"
+               f"Polls:   {poll_count}\n"
+               f"Servers compared: {len(servers)}\n"
+               f"Combined peak players: {total_peak}\n"
+               f"Anomalies: {total_anom}   Bot bursts: {total_spikes}\n" +
+               (f"Busiest: {busiest['name'][:34]} (peak {busiest['peak']})\n"
+                if busiest else "") +
+               (f"Most reliable: {most_reliable['name'][:30]} "
+                f"({most_reliable['uptime']:.1f}%)" if most_reliable else ""))
+    ax1.text(0.99, 0.97, summary, transform=ax1.transAxes,
+             ha="right", va="top", fontsize=8.5, family="monospace",
+             bbox={"boxstyle": "round", "facecolor": "#f4f4f4",
+                   "edgecolor": "#cccccc", "alpha": 0.9})
+
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
+    buf.seek(0)
+    return discord.File(buf, filename="compare.png")

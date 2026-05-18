@@ -74,6 +74,11 @@ def _migrate(c):
             "  WHERE snapshots.ts = polls.ts"
             ") WHERE player_count IS NULL AND ok=1")
 
+    scols = {r["name"] for r in c.execute("PRAGMA table_info(servers)")}
+    if "bot_state" not in scols:
+        c.execute(
+            "ALTER TABLE servers ADD COLUMN bot_state TEXT DEFAULT 'normal'")
+
 
 # --- polls ---
 
@@ -141,6 +146,17 @@ def online_servers():
         return c.execute("SELECT * FROM servers WHERE status='online'").fetchall()
 
 
+def all_servers():
+    with _db() as c:
+        return c.execute("SELECT * FROM servers ORDER BY name").fetchall()
+
+
+def set_bot_state(key, state):
+    with _db() as c:
+        c.execute("UPDATE servers SET bot_state=? WHERE server_key=?",
+                  (state, key))
+
+
 def find_servers(query):
     like = f"%{query}%"
     with _db() as c:
@@ -187,6 +203,21 @@ def server_history(key, limit=None, since=None):
     return list(reversed(rows))
 
 
+def all_snapshots(since=None):
+    """Every server's snapshots oldest-first, for the all-server comparison.
+
+    `since` is an optional ISO timestamp lower bound (inclusive).
+    """
+    q = "SELECT server_key, ts, name, players, hbcounter FROM snapshots"
+    params = []
+    if since is not None:
+        q += " WHERE ts>=?"
+        params.append(since)
+    q += " ORDER BY id"
+    with _db() as c:
+        return c.execute(q, params).fetchall()
+
+
 def last_poll_servers():
     with _db() as c:
         last = c.execute(
@@ -223,6 +254,28 @@ def server_anomalies(key, limit=10):
             (key, limit)).fetchall()
 
 
+def anomaly_counts(since=None):
+    """Per-server anomaly tallies, keyed by server_key.
+
+    Returns {server_key: {"total": n, "alerts": n, "bot_spikes": n}}.
+    """
+    q = ("SELECT server_key, "
+         "COUNT(*) total, "
+         "SUM(CASE WHEN severity='alert' THEN 1 ELSE 0 END) alerts, "
+         "SUM(CASE WHEN type='bot_spike' THEN 1 ELSE 0 END) bot_spikes "
+         "FROM anomalies")
+    params = []
+    if since is not None:
+        q += " WHERE ts>=?"
+        params.append(since)
+    q += " GROUP BY server_key"
+    with _db() as c:
+        return {r["server_key"]: {"total": r["total"],
+                                  "alerts": r["alerts"] or 0,
+                                  "bot_spikes": r["bot_spikes"] or 0}
+                for r in c.execute(q, params).fetchall()}
+
+
 # --- stats ---
 
 def stats():
@@ -239,5 +292,7 @@ def stats():
             "online": n("SELECT COUNT(*) n FROM servers WHERE status='online'"),
             "anomalies": n("SELECT COUNT(*) n FROM anomalies"),
             "alerts": n("SELECT COUNT(*) n FROM anomalies WHERE severity='alert'"),
+            "bot_spikes": n(
+                "SELECT COUNT(*) n FROM anomalies WHERE type='bot_spike'"),
             "last_poll": last["ts"] if last else None,
         }

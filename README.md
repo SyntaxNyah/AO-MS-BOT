@@ -15,8 +15,12 @@ bot detects anomalies, posts alerts to Discord, and can draw historical graphs.
 - Full historical database (SQLite) &mdash; every server, every poll
 - Plain-text event log (`data/events.log`) &mdash; a running notepad of everything that happened
 - Anomaly detection with alerts posted to a Discord channel
+- Bot-pattern detection &mdash; flags near-empty servers that suddenly fill with
+  players over a poll or two, and logs when the burst subsides
 - On-demand historical graphs of HB counter and player counts, with rollovers,
-  restarts, counter drops and offline/return events marked on the chart
+  restarts, counter drops, bot bursts and offline/return events marked
+- `/compare` &mdash; an all-server "Ultimate statistician" comparison of player
+  counts, uptime and peak/mean stats
 - Servers are tracked by their `ip:port` address, so two servers sharing a
   display name never collide &mdash; and they can be looked up by address
 
@@ -54,9 +58,24 @@ flags:
 | `hb_rollover` | The HB counter wrapped normally at 50000 (informational) |
 | `hb_restart` | The HB counter reset because the server was restarted |
 | `hb_reset` | The HB counter slammed to the floor too fast for a genuine restart &mdash; likely a manual reset |
+| `bot_spike` | A near-empty server suddenly filled with players &mdash; a suspected automated bot fill |
+| `bot_spike_end` | A suspected bot burst subsided and the player count fell back to normal |
 
-HB-counter anomalies are posted to their own channel so they are easy to review
-separately from routine events. High-severity HB alerts ping `@here`.
+HB-counter anomalies and suspected bot bursts are posted to the integrity
+channel so they are easy to review separately from routine events.
+High-severity integrity alerts (including bot bursts) ping `@here`.
+
+### Bot-pattern detection
+
+A server that normally sits near-empty suddenly gaining **40&ndash;100 players
+over just a poll or two** looks like an automated bot fill rather than organic
+traffic. On every poll the bot measures each server's baseline (the median of
+its recent player counts) and flags a `bot_spike` when a server whose baseline
+is at or below **8 players** jumps to **40 or more**. A gradual, organic rise
+keeps the baseline high enough that it is *not* flagged &mdash; only sudden
+bursts are. When the burst subsides the bot logs a `bot_spike_end` so the data
+reflects both the start and the end of the event. These thresholds are tunable
+in `config.py` (`BOT_SPIKE_MIN`, `BOT_BASELINE_MAX`, `BOT_SPIKE_POLLS`).
 
 ### Graphs
 
@@ -72,9 +91,15 @@ graphed window is marked on the timeline:
 | Orange dashed line | Restart &mdash; the counter reset from a server restart |
 | Grey dashed line | The server dropped off the master list |
 | Green solid line | The server came back onto the master list |
+| Pink line (player axis) | A suspected bot burst on the player count |
 
-A summary box on the chart counts the rollovers, restarts, drops, and
-offline/return cycles over the graphed span.
+A summary box on the chart counts the rollovers, restarts, drops,
+offline/return cycles and suspected bot bursts over the graphed span.
+
+`/compare` is the "Ultimate statistician" view: it compares **every server
+ever tracked** against one another in a single chart &mdash; player counts over
+time, server uptime, and peak/mean player ranking &mdash; plus a ranked
+leaderboard in the embed. It accepts the same time filters as `/playercount`.
 
 ## Commands
 
@@ -84,6 +109,7 @@ offline/return cycles over the graphed span.
 | `/server <query>` | Details and recent history for one server; `query` is part of a server name or an exact `ip:port` address |
 | `/graph <query>` | Historical HB-counter and players graph for a server; `query` is part of a server name or an exact `ip:port` address |
 | `/playercount [period] [view]` | Global player-count graph: trend or daily peak/low, filterable by day/week/month/year/all time |
+| `/compare [period]` | Ultimate statistician: compare every server's player counts, uptime and peak/mean stats together |
 | `/anomalies [count] [alerts_only]` | Show recently detected anomalies |
 | `/stats` | Monitoring statistics (polls, snapshots, uptime) |
 | `/poll` | Run a master-server poll immediately |

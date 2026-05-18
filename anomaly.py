@@ -1,11 +1,18 @@
-"""Heartbeat-counter analysis.
+"""Heartbeat-counter and player-count analysis.
 
 A server's hbcounter rises by roughly 1 per minute. When it reaches HB_CAP it
 rolls over and continues from (HB_CAP - ROLLOVER_DROP); that is normal. Any
 change the rate model and rollover cannot explain is flagged.
+
+The player count is watched separately: a near-empty server that suddenly
+fills with players over a poll or two is flagged as a suspected bot pattern.
 """
-from config import (HB_CAP, HB_MARGIN, HB_RATE_MAX, HB_REAL_RESTART_MINUTES,
-                    HB_RESTART_WINDOW, ROLLOVER_DROP)
+import statistics
+
+from config import (BOT_BASELINE_MAX, BOT_BASELINE_WINDOW, BOT_SPIKE_MAX,
+                    BOT_SPIKE_MIN, BOT_SPIKE_POLLS, HB_CAP, HB_MARGIN,
+                    HB_RATE_MAX, HB_REAL_RESTART_MINUTES, HB_RESTART_WINDOW,
+                    ROLLOVER_DROP)
 
 
 def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True):
@@ -62,3 +69,49 @@ def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True):
     return ("hb_drop", sev,
             f"HB DROPPED {prev_hb} -> {cur_hb} ({delta}) -- "
             f"not explained by a normal rollover{note}.")
+
+
+def analyze_players(recent_players, cur_players, prev_state="normal"):
+    """Spot a bot-like player burst on a normally near-empty server.
+
+    `recent_players` is the server's player counts from prior polls,
+    oldest-first and excluding the current poll. `cur_players` is this poll's
+    count. `prev_state` is the server's stored bot-pattern state -- "normal"
+    or "spike".
+
+    Returns (new_state, anomaly) where anomaly is (type, severity, detail) or
+    None. A sudden jump to BOT_SPIKE_MIN+ players from a baseline at or below
+    BOT_BASELINE_MAX is reported as `bot_spike`; the burst subsiding is
+    reported once as `bot_spike_end` so the data reflects both edges.
+    """
+    state = prev_state or "normal"
+    if cur_players is None:
+        return state, None
+
+    # A spike already in progress: wait for the burst to subside, then close
+    # it out once -- without re-alerting on every poll while it persists.
+    if state == "spike":
+        if cur_players < BOT_SPIKE_MIN:
+            return ("normal", ("bot_spike_end", "info",
+                    f"Player count fell back to {cur_players} -- the "
+                    "suspected bot burst has subsided."))
+        return ("spike", None)
+
+    window = [p for p in recent_players[-BOT_BASELINE_WINDOW:] if p is not None]
+    if len(window) < 3:
+        return (state, None)
+
+    # Exclude the freshest polls from the baseline so a burst that is still
+    # building cannot raise the baseline it is being measured against.
+    edge = max(BOT_SPIKE_POLLS - 1, 0)
+    baseline_part = window[:-edge] if edge and len(window) > edge else window
+    baseline = statistics.median(baseline_part)
+
+    if baseline <= BOT_BASELINE_MAX and cur_players >= BOT_SPIKE_MIN:
+        band = ("" if cur_players <= BOT_SPIKE_MAX
+                else f" -- above the usual {BOT_SPIKE_MIN}-{BOT_SPIKE_MAX} band")
+        return ("spike", ("bot_spike", "alert",
+                f"Player count surged to {cur_players} from a baseline of "
+                f"~{baseline:.0f} within {BOT_SPIKE_POLLS} poll(s){band} -- "
+                "looks like an automated bot fill, not organic traffic."))
+    return (state, None)
