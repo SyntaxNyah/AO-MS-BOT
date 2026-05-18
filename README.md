@@ -266,8 +266,9 @@ a full dashboard with a tab for everything the bot tracks:
 
 Every chart has hover tooltips, every period can be filtered to
 day/week/month/year/all, and clicking any server anywhere opens a detail
-view with its player history, HB-counter history, daily breakdown and
-anomalies. Most tabs have CSV/JSON export buttons, and server and compare
+view with an uptime timeline (online/offline strip with outages), player
+history, HB-counter history, daily breakdown and anomalies. Most tabs have
+CSV/JSON export buttons, and server and compare
 views have shareable links. The dashboard is strictly read-only &mdash; it
 never polls or posts anything.
 

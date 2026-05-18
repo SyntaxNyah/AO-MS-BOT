@@ -177,6 +177,24 @@ async def api_server(request):
     snap = await asyncio.to_thread(db.latest_snapshot, key)
     hist = await asyncio.to_thread(db.server_history, key, None, since)
     anoms = await asyncio.to_thread(db.server_anomalies, key, 100)
+    polls = await asyncio.to_thread(db.poll_history, since)
+
+    # Uptime timeline: at every poll the server was online if it produced a
+    # snapshot with that exact timestamp; collapse the run into segments.
+    snap_ts = {r["ts"] for r in hist}
+    online = 0
+    segments = []
+    for r in polls:
+        on = r["ts"] in snap_ts
+        if on:
+            online += 1
+        if segments and segments[-1]["online"] == on:
+            continue
+        if segments:
+            segments[-1]["end"] = r["ts"]
+        segments.append({"start": r["ts"], "end": r["ts"], "online": on})
+    if segments:
+        segments[-1]["end"] = polls[-1]["ts"]
 
     sampled = _downsample(hist)
     return web.json_response({
@@ -186,6 +204,9 @@ async def api_server(request):
                     for r in sampled],
         "daily": _daily(hist, "ts", "players"),
         "anomalies": [dict(a) for a in anoms],
+        "timeline": segments,
+        "uptime": round(100.0 * online / len(polls), 1) if polls else 0.0,
+        "outages": sum(1 for s in segments if not s["online"]),
         "points": len(hist),
         "period": period,
     })
