@@ -535,3 +535,115 @@ def make_compare_graph(servers, label, poll_count, global_history=None):
     fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
     buf.seek(0)
     return discord.File(buf, filename="compare.png")
+
+
+def make_hb_overview_graph(servers, label, page, total_pages):
+    """Stacked HB-counter charts for several servers, one row each.
+
+    `servers` is a list of dicts with: name, key, rows (oldest-first snapshot
+    rows), anomalies (anomaly rows). Counter drops, jumps, resets, rollovers,
+    restarts and offline/return events are all marked on every row, so the
+    chart doubles as a log of every heartbeat event in the window.
+    """
+    n = max(len(servers), 1)
+    fig = Figure(figsize=(13, 2.8 * n + 1.4))
+    axes = fig.subplots(n, 1, squeeze=False)[:, 0]
+    fig.suptitle(
+        f"Attorney Online -- HB counter overview   "
+        f"(page {page}/{total_pages})",
+        fontsize=13, fontweight="bold")
+
+    for ax, s in zip(axes, servers):
+        rows = s["rows"]
+        title = f"{s['name'][:46]}    {s['key']}"
+        if len(rows) < 2:
+            ax.text(0.5, 0.5, "not enough HB history in this range",
+                    transform=ax.transAxes, ha="center", va="center",
+                    fontsize=9, color="#888888")
+            ax.set_title(title, fontsize=9, loc="left")
+            ax.set_yticks([])
+            continue
+
+        pts = _downsample(rows)
+        times = [p["ts"] for p in pts]
+
+        def _f(v):
+            return float("nan") if v is None else float(v)
+
+        hb = [_f(p["hb"]) for p in pts]
+        hb_lo = [_f(p["hb_min"]) for p in pts]
+        hb_hi = [_f(p["hb_max"]) for p in pts]
+        ax.fill_between(times, hb_lo, hb_hi, color="#4f9dff", alpha=0.20,
+                        linewidth=0)
+        ax.plot(times, hb, color="#4f9dff", linewidth=1.3)
+        ax.set_ylabel("HB counter")
+        ax.grid(True, alpha=0.3)
+        ax.ticklabel_format(axis="y", style="plain", useOffset=False)
+
+        c = {"drop": 0, "jump": 0, "rollover": 0, "restart": 0,
+             "gone": 0, "returned": 0}
+        for a in s.get("anomalies", []):
+            try:
+                t = _parse(a["ts"])
+            except (TypeError, ValueError):
+                continue
+            if not (times[0] <= t <= times[-1]):
+                continue
+            atype = a["type"]
+            if atype in _DROP_TYPES:
+                ax.axvline(t, color="#e8503a", linewidth=1.0, alpha=0.75)
+                c["drop"] += 1
+            elif atype == "hb_jump":
+                ax.axvline(t, color="#1f6f8b", linewidth=1.0, alpha=0.75)
+                c["jump"] += 1
+            elif atype in _ROLLOVER_TYPES:
+                ax.axvline(t, color="#9b59b6", linewidth=0.9, alpha=0.5,
+                           linestyle=":")
+                c["rollover"] += 1
+            elif atype in _RESTART_TYPES:
+                ax.axvline(t, color="#f0a23a", linewidth=0.9, alpha=0.55,
+                           linestyle="--")
+                c["restart"] += 1
+            elif atype in _GONE_TYPES:
+                ax.axvline(t, color="#888888", linewidth=1.0, alpha=0.6,
+                           linestyle="--")
+                c["gone"] += 1
+            elif atype in _RETURN_TYPES:
+                ax.axvline(t, color="#41c97a", linewidth=1.1, alpha=0.75)
+                c["returned"] += 1
+
+        cur = rows[-1]["hbcounter"]
+        info = (f"HB now {cur if cur is not None else '-'}   "
+                f"drops {c['drop']}  jumps {c['jump']}  "
+                f"rollovers {c['rollover']}  restarts {c['restart']}  "
+                f"off/back {c['gone']}/{c['returned']}")
+        ax.set_title(f"{title}\n{info}", fontsize=8.5, loc="left",
+                     family="monospace")
+
+        locator = mdates.AutoDateLocator(maxticks=9)
+        ax.xaxis.set_major_locator(locator)
+        ax.xaxis.set_major_formatter(mdates.ConciseDateFormatter(locator))
+        for lbl in ax.get_xticklabels():
+            lbl.set_rotation(15)
+            lbl.set_horizontalalignment("right")
+
+    axes[-1].set_xlabel("Time (UTC)")
+    fig.legend(handles=[
+        Line2D([], [], color="#4f9dff", linewidth=1.6, label="HB counter"),
+        Patch(facecolor="#4f9dff", alpha=0.20, label="min-max range"),
+        Line2D([], [], color="#e8503a", linewidth=1.2, label="drop / reset"),
+        Line2D([], [], color="#1f6f8b", linewidth=1.2, label="jump"),
+        Line2D([], [], color="#9b59b6", linewidth=1.2, linestyle=":",
+               label="rollover"),
+        Line2D([], [], color="#f0a23a", linewidth=1.2, linestyle="--",
+               label="restart"),
+        Line2D([], [], color="#888888", linewidth=1.2, linestyle="--",
+               label="went offline"),
+        Line2D([], [], color="#41c97a", linewidth=1.2, label="came back"),
+    ], loc="lower center", ncol=8, fontsize=8, framealpha=0.9)
+
+    fig.tight_layout(rect=(0, 0.035, 1, 0.97))
+    buf = io.BytesIO()
+    fig.savefig(buf, format="png", dpi=110, bbox_inches="tight")
+    buf.seek(0)
+    return discord.File(buf, filename="hboverview.png")
