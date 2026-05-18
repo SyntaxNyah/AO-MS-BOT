@@ -434,21 +434,50 @@ enough &mdash; the bot only ever does a `GET` and never writes back.
 
 ### Realistic ways to run your own
 
-1. **Run the real master server.** The official master server is not open source
-   ([AttorneyOnline/master](https://github.com/AttorneyOnline/master)). Host
-   it yourself, have your AO servers heartbeat to it, and set
-   `MS_URL=https://your-host/servers`. This is the closest to the real thing.
+1. **Run our open-source master server (recommended).** We maintain a
+   Python master server &mdash;
+   **[Nyan-AO-Master-Server](https://github.com/SyntaxNyah/Nyan-AO-Master-Server)**
+   &mdash; that you can host yourself. It accepts heartbeats from your AO
+   servers and publishes exactly the JSON array this bot expects. Follow the
+   setup instructions in that repository, then point the bot at it with
+   `MS_URL=https://your-host/servers`. See
+   [Setting up your own master server](#setting-up-your-own-master-server)
+   below.
 
-2. **Serve a static or generated JSON file.** If you only run a handful of
+2. **Run the official master server.** The official Attorney Online master
+   server is not open source
+   ([AttorneyOnline/master](https://github.com/AttorneyOnline/master)). If you
+   have access to it you can host it yourself and set `MS_URL` the same way.
+
+3. **Serve a static or generated JSON file.** If you only run a handful of
    servers and do not need real heartbeating, you can publish the array above
    as a static file (or generate it from your own script/cron) and point
    `MS_URL` at it. The bot does not care how the JSON is produced, only that
    it is current when polled &mdash; `POLL_INTERVAL_MINUTES` controls how often.
 
-3. **Proxy or filter the official list.** Point `MS_URL` at a small service
+4. **Proxy or filter the official list.** Point `MS_URL` at a small service
    of your own that fetches the official list and trims it to just your
    community's servers (or merges in extra ones). The bot then tracks exactly
    that curated set.
+
+### Setting up your own master server
+
+If you want a real, open-source master server rather than a static file or a
+proxy, use **[Nyan-AO-Master-Server](https://github.com/SyntaxNyah/Nyan-AO-Master-Server)**
+&mdash; our self-hostable Python master server. It accepts heartbeats from
+your Attorney Online servers and serves the JSON server list this bot polls,
+in exactly the shape described above.
+
+Full installation and configuration instructions live in the
+[Nyan-AO-Master-Server repository](https://github.com/SyntaxNyah/Nyan-AO-Master-Server).
+Once it is running, point the bot at it:
+
+```bash
+MS_URL=https://your-master-host/servers
+```
+
+Everything else &mdash; polling, history, anomaly detection, graphs and the
+dashboard &mdash; works against it unchanged.
 
 ### Running your own WebAO
 
