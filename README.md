@@ -329,6 +329,110 @@ The link appears in `/server`, on the dashboard's server tables (a **&#9654;
 Join** button per server) and in each server's detail view. The WebAO client
 host defaults to `webao.miku.pizza` and is configurable with `WEBAO_CLIENT`.
 
+## Using your own master list and WebAO
+
+Nothing in this bot is hard-wired to the official Attorney Online
+infrastructure. It talks to two endpoints, and both are plain config values:
+
+- `MS_URL` &mdash; the master server list it polls (default
+  `https://servers.aceattorneyonline.com/servers`)
+- `WEBAO_CLIENT` &mdash; the WebAO client host used to build join links
+  (default `webao.miku.pizza/client.html`)
+
+Point those two at your own infrastructure and the whole bot &mdash; polling,
+history, anomaly detection, graphs and the dashboard &mdash; works against it
+unchanged.
+
+### What the master list has to return
+
+`MS_URL` just needs to answer an HTTP `GET` with a JSON **array of server
+objects**. The bot reads these fields per object (see `monitor.py`):
+
+| Field | Required | Notes |
+|-------|----------|-------|
+| `ip` | yes | Host or IP. May be markdown-wrapped (`[host](url)`) &mdash; the bot unwraps it |
+| `port` | yes | Game port, must parse as an integer |
+| `name` | no | Display name; defaults to `(unnamed)` |
+| `description` | no | Free text |
+| `players` | no | Current player count; defaults to `0` |
+| `hbcounter` | no | Ever-rising heartbeat counter; omit it and HB anomaly detection is simply skipped for that server |
+| `ws_port` | no | Plain websocket port &mdash; enables an `http://` WebAO join link |
+| `wss_port` | no | Secure websocket port &mdash; enables an `https://` WebAO join link |
+
+A minimal valid response:
+
+```json
+[
+  {
+    "ip": "203.0.113.10",
+    "port": 27016,
+    "name": "My Server",
+    "description": "A test server",
+    "players": 4,
+    "hbcounter": 1234,
+    "ws_port": 50001,
+    "wss_port": 50002
+  }
+]
+```
+
+That is exactly the shape the official `tsuserver`/master server already
+emits, so any standard AO master server works out of the box. If you write
+your own list service, any web framework that returns that JSON array is
+enough &mdash; the bot only ever does a `GET` and never writes back.
+
+### Realistic ways to run your own
+
+1. **Run the real master server.** The official master server is open source
+   ([AttorneyOnline/master](https://github.com/AttorneyOnline/master)). Host
+   it yourself, have your AO servers heartbeat to it, and set
+   `MS_URL=https://your-host/servers`. This is the closest to the real thing.
+
+2. **Serve a static or generated JSON file.** If you only run a handful of
+   servers and do not need real heartbeating, you can publish the array above
+   as a static file (or generate it from your own script/cron) and point
+   `MS_URL` at it. The bot does not care how the JSON is produced, only that
+   it is current when polled &mdash; `POLL_INTERVAL_MINUTES` controls how often.
+
+3. **Proxy or filter the official list.** Point `MS_URL` at a small service
+   of your own that fetches the official list and trims it to just your
+   community's servers (or merges in extra ones). The bot then tracks exactly
+   that curated set.
+
+### Running your own WebAO
+
+WebAO ([AttorneyOnline/webAO](https://github.com/AttorneyOnline/webAO)) is a
+static browser build &mdash; host it anywhere (GitHub Pages, nginx, a CDN) and
+set `WEBAO_CLIENT` to its `client.html` path, with no scheme:
+
+```bash
+WEBAO_CLIENT=ao.example.com/webao/client.html
+```
+
+The bot picks `http://` or `https://` automatically to match each server's
+`ws_port` / `wss_port`, and appends the `connect=` query the client expects.
+For browser join links to work end to end you need three things lined up:
+your WebAO build is reachable over HTTPS, your AO servers expose a websocket
+port, and that port is published as `ws_port`/`wss_port` in your master list.
+A server that publishes neither websocket port simply gets no join link.
+
+### Putting it together
+
+A fully self-hosted setup is just these `.env` values pointed at your own
+hosts:
+
+```bash
+MS_URL=https://ms.example.com/servers
+WEBAO_CLIENT=ao.example.com/webao/client.html
+POLL_INTERVAL_MINUTES=1
+WEBSITE_ENABLED=1
+WEBSITE_TITLE=My Community Server Tracker
+```
+
+Everything else &mdash; the SQLite history, anomaly detection, graphs, the
+dashboard and all slash commands &mdash; behaves identically; it is all
+driven by whatever the configured `MS_URL` returns.
+
 ## Credits
 
 - **AO-MS-BOT** &mdash; created and maintained by
