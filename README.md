@@ -335,7 +335,10 @@ Nothing in this bot is hard-wired to the official Attorney Online
 infrastructure. It talks to two endpoints, and both are plain config values:
 
 - `MS_URL` &mdash; the master server list it polls (default
-  `https://servers.aceattorneyonline.com/servers`)
+  `https://servers.aceattorneyonline.com/servers`). List several URLs separated
+  by commas to poll **more than one master at once** &mdash; their server lists
+  are merged and deduplicated by `ip:port`, and an unreachable master is skipped
+  without blacking out the others.
 - `WEBAO_CLIENT` &mdash; the WebAO client host used to build join links
   (default `webao.miku.pizza/client.html`)
 

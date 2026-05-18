@@ -366,6 +366,7 @@ async def api_meta(request):
         "poll_interval": config.POLL_INTERVAL_MINUTES,
         "dead_server_days": config.DEAD_SERVER_DAYS,
         "ms_url": config.MS_URL,
+        "ms_urls": config.MS_URLS,
         "webao_client": config.WEBAO_CLIENT,
     })
 
