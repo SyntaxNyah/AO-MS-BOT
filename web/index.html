@@ -122,6 +122,32 @@
     flex-wrap:wrap; gap:10px; }
   .badge { font-size:11px; background:var(--panel2); border:1px solid var(--line);
     border-radius:20px; padding:2px 9px; color:var(--dim); }
+  .exportbar { display:flex; gap:8px; align-items:center; margin:0 0 16px; }
+  .explabel { color:var(--dim); font-size:12px; }
+  .expbtn { background:var(--panel2); border:1px solid var(--line);
+    border-radius:8px; padding:5px 12px; font-size:12px; color:var(--accent); }
+  .expbtn:hover { border-color:var(--accent); }
+  .minibtn { background:var(--panel2); color:var(--txt);
+    border:1px solid var(--line); border-radius:8px; padding:5px 11px;
+    font-size:12px; cursor:pointer; }
+  .minibtn:hover { border-color:var(--accent); }
+  .picker { margin-bottom:14px; }
+  .picklist { display:grid; gap:3px 14px; margin:10px 0;
+    grid-template-columns:repeat(auto-fill,minmax(210px,1fr));
+    max-height:210px; overflow:auto; border:1px solid var(--line);
+    border-radius:10px; padding:10px; background:var(--panel2); }
+  .pick { font-size:13px; color:var(--txt); display:flex; align-items:center;
+    gap:6px; cursor:pointer; }
+  .ptools { display:flex; gap:8px; flex-wrap:wrap; }
+  .recgrid { display:grid; gap:14px;
+    grid-template-columns:repeat(auto-fit,minmax(215px,1fr)); }
+  .rec { background:var(--panel2); border:1px solid var(--line);
+    border-radius:12px; padding:15px 16px; }
+  .rec .rl { color:var(--dim); font-size:11px; text-transform:uppercase;
+    letter-spacing:.6px; }
+  .rec .rv { font-size:26px; font-weight:700; margin:3px 0;
+    color:var(--accent); }
+  .rec .rs { color:var(--dim); font-size:12px; }
   footer { color:var(--dim); font-size:12px; text-align:center; margin-top:14px; }
 </style>
 </head>
@@ -143,8 +169,8 @@
 "use strict";
 const TABS = [
   ["dashboard","Dashboard"], ["servers","Servers"], ["players","Players"],
-  ["compare","Compare"], ["hb","HB Counter"], ["anomalies","Anomalies"],
-  ["dead","Dead Servers"],
+  ["activity","Activity"], ["compare","Compare"], ["hb","HB Counter"],
+  ["anomalies","Anomalies"], ["records","Records"], ["dead","Dead Servers"],
 ];
 const PERIODS = [["day","Day"],["week","Week"],["month","Month"],
                  ["year","Year"],["all","All time"]];
@@ -154,7 +180,8 @@ const PALETTE = ["#7c9cff","#41c97a","#e8a13a","#f0524b","#a472f0","#3fc8d4",
   "#e86fb0","#9bd14b","#5f8de8","#d4953f","#62c98f","#b07cf0","#e8c13a",
   "#4fb0e0","#e0726b","#7ad48f"];
 
-const state = { tab:"dashboard", period:"all", meta:{}, sort:{} };
+const state = { tab:"dashboard", period:"all", meta:{}, sort:{},
+                 compareSel:[] };
 let refreshTimer = null;
 
 // ---- tiny helpers --------------------------------------------------------
@@ -315,6 +342,50 @@ function rankChart(opts){
   return wrap;
 }
 
+function heatColor(t){
+  const a=[28,34,48], b=[65,201,122];
+  return "rgb("+Math.round(a[0]+(b[0]-a[0])*t)+","+
+    Math.round(a[1]+(b[1]-a[1])*t)+","+
+    Math.round(a[2]+(b[2]-a[2])*t)+")";
+}
+function heatmap(matrix,days){
+  let vals=[];
+  matrix.forEach(row=>row.forEach(v=>{ if(v!=null) vals.push(v); }));
+  if(!vals.length) return emptyBox("No activity data yet.");
+  const max=Math.max(...vals),min=Math.min(...vals);
+  const W=1000,cell=30,LW=46,TOP=22,H=TOP+7*cell+14;
+  const cw=(W-LW)/24;
+  let s="";
+  for(let h=0;h<24;h+=2)
+    s+=`<text x="${LW+cw*h+cw/2}" y="14" class="xlab">${h}:00</text>`;
+  for(let d=0;d<7;d++){
+    s+=`<text x="${LW-8}" y="${TOP+cell*d+cell/2+4}" class="ylab">`+
+       `${days[d]}</text>`;
+    for(let h=0;h<24;h++){
+      const v=matrix[d][h];
+      const x=LW+cw*h,y=TOP+cell*d;
+      const fill=v==null?"#12161e":heatColor((v-min)/((max-min)||1));
+      s+=`<rect x="${x+1.5}" y="${y+1.5}" width="${cw-3}" `+
+         `height="${cell-3}" rx="3" fill="${fill}"><title>${days[d]} `+
+         `${h}:00 — ${v==null?"no data":v+" players avg"}</title></rect>`;
+    }
+  }
+  const wrap=el("div","chartwrap");
+  wrap.innerHTML=`<svg viewBox="0 0 ${W} ${H}" class="chart">${s}</svg>`;
+  return wrap;
+}
+function exportBar(dataset,extra){
+  const box=el("div","exportbar");
+  box.appendChild(el("span","explabel","Export this data:"));
+  for(const fmt of ["csv","json"]){
+    let url="/api/export?dataset="+dataset+"&format="+fmt+
+      "&period="+state.period+(extra||"");
+    const a=el("a","expbtn","↓ "+fmt.toUpperCase());
+    a.href=url; a.setAttribute("download","");
+    box.appendChild(a);
+  }
+  return box;
+}
 function legend(series){
   const box=el("div","legend");
   series.forEach(s=>{
@@ -473,6 +544,7 @@ let serverSearch="";
 async function renderServers(view){
   const d=await getJSON("/api/servers?period="+state.period);
   view.appendChild(periodBar());
+  view.appendChild(exportBar("servers"));
 
   const c=card("Every tracked server");
   c.querySelector("h2").appendChild(
@@ -524,6 +596,7 @@ async function renderServers(view){
 async function renderPlayers(view){
   const d=await getJSON("/api/players?period="+state.period);
   view.appendChild(periodBar());
+  view.appendChild(exportBar("players"));
 
   const tc=card("Player count — continuous trend");
   tc.querySelector("h2").appendChild(el("span","sub",d.polls+" polls"));
@@ -555,22 +628,86 @@ async function renderCompare(view){
   view.appendChild(periodBar());
 
   if(!d.servers.length){
-    view.appendChild(card("Comparison"));
-    view.lastChild.appendChild(el("div","empty","No server data yet."));
+    const c=card("Comparison");
+    c.appendChild(el("div","empty","No server data yet."));
+    view.appendChild(c);
     return;
   }
-  const oc=card("Busiest servers — player counts overlaid");
-  oc.querySelector("h2").appendChild(
-    el("span","sub","top "+d.overlay.length+" by peak · "+
-       d.poll_count+" polls"));
-  const series=d.overlay.map((s,i)=>({name:s.name,
-    color:PALETTE[i%PALETTE.length],
-    points:s.points.map(p=>[ms(p[0]),p[1]])}));
-  if(d.global.length) series.unshift({name:"Global total",color:"#ffffff",
-    points:d.global.map(p=>[ms(p[0]),p[1]])});
-  oc.appendChild(lineChart({series,height:360}));
-  oc.appendChild(legend(series));
+  const oc=card("Compare servers — player counts overlaid");
+  const sub=el("span","sub","");
+  oc.querySelector("h2").appendChild(sub);
+
+  const sorted=d.servers.slice().sort((a,b)=>b.peak-a.peak);
+  const picker=el("div","picker");
+  const psearch=el("input","search"); psearch.type="search";
+  psearch.placeholder="Filter servers to hand-pick…";
+  const plist=el("div","picklist");
+  function buildPickList(){
+    plist.innerHTML="";
+    const q=psearch.value.trim().toLowerCase();
+    for(const s of sorted){
+      if(q && !s.name.toLowerCase().includes(q) &&
+         !s.key.toLowerCase().includes(q)) continue;
+      const lab=el("label","pick");
+      const cb=el("input"); cb.type="checkbox";
+      cb.checked=state.compareSel.includes(s.key);
+      cb.onchange=()=>{
+        if(cb.checked){ if(!state.compareSel.includes(s.key))
+          state.compareSel.push(s.key); }
+        else state.compareSel=state.compareSel.filter(k=>k!==s.key);
+        drawOverlay();
+      };
+      lab.appendChild(cb);
+      lab.appendChild(document.createTextNode(
+        " "+clip(s.name,26)+" ("+s.peak+")"));
+      plist.appendChild(lab);
+    }
+  }
+  psearch.oninput=buildPickList;
+  const ptools=el("div","ptools");
+  const clearBtn=el("button","minibtn","Clear — show auto top 12");
+  clearBtn.onclick=()=>{ state.compareSel=[]; buildPickList(); drawOverlay(); };
+  const linkBtn=el("button","minibtn","Copy shareable link");
+  linkBtn.onclick=()=>{
+    const h="#/compare"+(state.compareSel.length?"?s="+
+      state.compareSel.map(encodeURIComponent).join(","):"");
+    if(navigator.clipboard)
+      navigator.clipboard.writeText(location.origin+location.pathname+h);
+    linkBtn.textContent="Link copied!";
+    setTimeout(()=>linkBtn.textContent="Copy shareable link",1500);
+  };
+  ptools.appendChild(clearBtn); ptools.appendChild(linkBtn);
+  picker.appendChild(psearch); picker.appendChild(plist);
+  picker.appendChild(ptools);
+  oc.appendChild(picker);
+  const chartBox=el("div");
+  oc.appendChild(chartBox);
   view.appendChild(oc);
+
+  async function drawOverlay(){
+    let series,note;
+    if(state.compareSel.length){
+      let r;
+      try { r=await getJSON("/api/series?period="+state.period+"&keys="+
+        state.compareSel.map(encodeURIComponent).join(",")); }
+      catch(e){ r={series:[]}; }
+      series=r.series.map((s,i)=>({name:s.name,
+        color:PALETTE[i%PALETTE.length],
+        points:s.points.map(p=>[ms(p[0]),p[1]])}));
+      note=series.length+" hand-picked server(s)";
+    } else {
+      series=d.overlay.map((s,i)=>({name:s.name,
+        color:PALETTE[i%PALETTE.length],
+        points:s.points.map(p=>[ms(p[0]),p[1]])}));
+      if(d.global.length) series.unshift({name:"Global total",
+        color:"#ffffff",points:d.global.map(p=>[ms(p[0]),p[1]])});
+      note="auto: busiest "+d.overlay.length+" servers";
+    }
+    sub.textContent=note+" · "+d.poll_count+" polls";
+    chartBox.replaceChildren(lineChart({series,height:360}),legend(series));
+  }
+  buildPickList();
+  drawOverlay();
 
   // tier breakdown
   const byTier={rock:[],stable:[],flaky:[],rare:[]};
@@ -646,6 +783,9 @@ async function renderAnomalies(view){
     (anomFilter.severity?"&severity="+encodeURIComponent(anomFilter.severity):"");
   const d=await getJSON("/api/anomalies?"+qs);
   view.appendChild(periodBar());
+  view.appendChild(exportBar("anomalies",
+    (anomFilter.type?"&type="+encodeURIComponent(anomFilter.type):"")+
+    (anomFilter.severity?"&severity="+encodeURIComponent(anomFilter.severity):"")));
 
   const c=card("Anomaly browser");
   c.querySelector("h2").appendChild(
@@ -701,6 +841,62 @@ async function renderDead(view){
   view.appendChild(c);
 }
 
+// ---- tab: activity -------------------------------------------------------
+async function renderActivity(view){
+  const d=await getJSON("/api/activity?period="+state.period);
+  view.appendChild(periodBar());
+  const c=card("Busiest times — average players by hour & weekday");
+  c.querySelector("h2").appendChild(el("span","sub",
+    d.polls+" polls · brighter = busier · hover a cell"));
+  c.appendChild(heatmap(d.matrix,d.days));
+  view.appendChild(c);
+}
+
+// ---- tab: records --------------------------------------------------------
+async function renderRecords(view){
+  const d=await getJSON("/api/records");
+  const c=card("All-time records & milestones");
+  const g=el("div","recgrid");
+  function add(label,val,sub,key){
+    const r=el("div","rec");
+    r.appendChild(el("div","rl",label));
+    r.appendChild(el("div","rv",String(val)));
+    if(sub){
+      const rs=el("div","rs");
+      if(key){ const a=el("a",null,sub); a.onclick=()=>openServer(key);
+        rs.appendChild(a); }
+      else rs.textContent=sub;
+      r.appendChild(rs);
+    }
+    g.appendChild(r);
+  }
+  if(d.peak_players) add("Highest player count",d.peak_players.v,
+    "on "+fmtTs(d.peak_players.ts));
+  if(d.peak_servers) add("Most servers online",d.peak_servers.v,
+    "on "+fmtTs(d.peak_servers.ts));
+  if(d.busiest_day) add("Busiest day",d.busiest_day.peak+" peak",
+    d.busiest_day.day+" · avg "+d.busiest_day.avg);
+  if(d.top_peak_server) add("Biggest single server",
+    d.top_peak_server.v+" players",d.top_peak_server.name,
+    d.top_peak_server.key);
+  if(d.most_tracked) add("Most data collected",
+    Number(d.most_tracked.v).toLocaleString()+" snaps",
+    d.most_tracked.name,d.most_tracked.key);
+  if(d.top_anomaly_server) add("Most anomalies",d.top_anomaly_server.v,
+    d.top_anomaly_server.name,d.top_anomaly_server.key);
+  if(d.top_bot_server) add("Most bot bursts",d.top_bot_server.v,
+    d.top_bot_server.name,d.top_bot_server.key);
+  const s=d.stats||{};
+  add("Total polls",(s.polls||0).toLocaleString(),"successful polls");
+  add("Total snapshots",(s.snapshots||0).toLocaleString(),"server readings");
+  add("Total anomalies",(s.anomalies||0).toLocaleString(),
+    (s.alerts||0)+" high-severity alerts");
+  if(d.first_poll) add("Monitoring since",fmtTs(d.first_poll),
+    "first recorded poll");
+  c.appendChild(g);
+  view.appendChild(c);
+}
+
 // ---- server detail modal -------------------------------------------------
 async function openServer(key){
   const modal=document.getElementById("modal");
@@ -718,6 +914,15 @@ async function openServer(key){
   const close=el("button","close","Close");
   close.onclick=()=>modal.classList.remove("show");
   sheet.appendChild(close);
+  const linkBtn=el("button","close","Copy link");
+  linkBtn.style.marginRight="8px";
+  linkBtn.onclick=()=>{
+    if(navigator.clipboard) navigator.clipboard.writeText(
+      location.origin+location.pathname+"#/server/"+encodeURIComponent(key));
+    linkBtn.textContent="Copied!";
+    setTimeout(()=>linkBtn.textContent="Copy link",1500);
+  };
+  sheet.appendChild(linkBtn);
   const s=d.server,snap=d.snapshot;
   sheet.appendChild(el("h2",null,s.name));
   const addr=el("p",null,s.server_key);
@@ -735,6 +940,7 @@ async function openServer(key){
     kv.appendChild(c);
   });
   sheet.appendChild(kv);
+  sheet.appendChild(exportBar("server","&key="+encodeURIComponent(key)));
 
   sheet.appendChild(el("div","charth","Players over time"));
   sheet.appendChild(lineChart({series:[{name:"Players",color:"var(--blue)",
@@ -756,8 +962,9 @@ async function openServer(key){
 
 // ---- router --------------------------------------------------------------
 const RENDERERS={dashboard:renderDashboard,servers:renderServers,
-  players:renderPlayers,compare:renderCompare,hb:renderHB,
-  anomalies:renderAnomalies,dead:renderDead};
+  players:renderPlayers,activity:renderActivity,compare:renderCompare,
+  hb:renderHB,anomalies:renderAnomalies,records:renderRecords,
+  dead:renderDead};
 
 function buildNav(){
   const nav=document.getElementById("nav");
@@ -792,10 +999,29 @@ async function render(){
     refreshTimer=setTimeout(render,60000);
 }
 
+function parseHash(){
+  const raw=(location.hash||"").replace(/^#\/?/,"");
+  const qi=raw.indexOf("?");
+  const path=qi<0?raw:raw.slice(0,qi);
+  const params={};
+  if(qi>=0) raw.slice(qi+1).split("&").forEach(kv=>{
+    const eq=kv.indexOf("=");
+    if(eq>0) params[kv.slice(0,eq)]=decodeURIComponent(kv.slice(eq+1));
+  });
+  return {path,params};
+}
 function route(){
-  const h=(location.hash||"").replace(/^#\/?/,"");
-  state.tab=RENDERERS[h]?h:"dashboard";
-  render();
+  const {path,params}=parseHash();
+  let serverKey=null,tab=path;
+  if(path.indexOf("server/")===0){
+    serverKey=decodeURIComponent(path.slice(7));
+    tab=state.tab;
+  }
+  state.tab=RENDERERS[tab]?tab:"dashboard";
+  if(params.s!==undefined)
+    state.compareSel=params.s?params.s.split(",").map(decodeURIComponent)
+      .filter(Boolean):[];
+  render().then(()=>{ if(serverKey) openServer(serverKey); });
 }
 
 window.addEventListener("hashchange",route);

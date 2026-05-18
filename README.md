@@ -252,19 +252,24 @@ a full dashboard with a tab for everything the bot tracks:
   top-15 peak-players ranking
 - **Players** &mdash; the global player count as a continuous trend *and* a
   per-day peak/average/low breakdown, for both players and servers online
-- **Compare** &mdash; the busiest servers' player counts overlaid on one
-  graph, reliability tiers, and an uptime ranking
+- **Activity** &mdash; a busiest-times heatmap showing average players by
+  hour of day and day of week
+- **Compare** &mdash; hand-pick any servers (or use the auto busiest dozen)
+  to overlay on one graph, reliability tiers, and an uptime ranking
 - **HB Counter** &mdash; every server's heartbeat counter on one graph with
   suspected tampering flagged red, plus a per-server status table
 - **Anomalies** &mdash; a filterable browser (by type, severity and time
   range) with an anomalies-by-type chart
+- **Records** &mdash; all-time milestones: highest player count, busiest day,
+  biggest server, most data collected and more
 - **Dead Servers** &mdash; servers absent long enough to be considered shut down
 
 Every chart has hover tooltips, every period can be filtered to
 day/week/month/year/all, and clicking any server anywhere opens a detail
 view with its player history, HB-counter history, daily breakdown and
-anomalies. The dashboard is strictly read-only &mdash; it never polls or
-posts anything.
+anomalies. Most tabs have CSV/JSON export buttons, and server and compare
+views have shareable links. The dashboard is strictly read-only &mdash; it
+never polls or posts anything.
 
 It refreshes itself every 60 seconds. If you expose it to the internet, put it
 behind a reverse proxy (nginx, Caddy) for HTTPS, or keep `WEBSITE_HOST` on

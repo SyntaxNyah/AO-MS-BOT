@@ -7,6 +7,8 @@ strictly read-only -- it never polls or posts anything.
 Enable it with WEBSITE_ENABLED=1; everything else has a sensible default.
 """
 import asyncio
+import csv
+import io
 import logging
 import os
 from datetime import datetime, timedelta, timezone
@@ -21,6 +23,7 @@ log = logging.getLogger("website")
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
 INTEGRITY_TYPES = ("hb_drop", "hb_jump", "hb_reset")
+WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
 
 _PERIODS = {
     "day": timedelta(days=1),
@@ -332,6 +335,173 @@ async def api_meta(request):
     })
 
 
+async def api_activity(request):
+    """A 7x24 weekday/hour grid of average player counts -- busiest times."""
+    period = request.query.get("period", "all")
+    since = _since(period)
+    polls = await asyncio.to_thread(db.poll_history, since)
+
+    grid = [[[0, 0] for _ in range(24)] for _ in range(7)]   # [sum, count]
+    for r in polls:
+        pc = r["player_count"]
+        if pc is None:
+            continue
+        try:
+            dt = datetime.fromisoformat(r["ts"])
+        except ValueError:
+            continue
+        cell = grid[dt.weekday()][dt.hour]
+        cell[0] += pc
+        cell[1] += 1
+
+    matrix = [[round(c[0] / c[1], 1) if c[1] else None for c in row]
+              for row in grid]
+    return web.json_response({
+        "matrix": matrix,
+        "days": list(WEEKDAYS),
+        "polls": len(polls),
+        "period": period,
+    })
+
+
+async def api_records(request):
+    """All-time records and milestones drawn from the whole archive."""
+    polls = await asyncio.to_thread(db.poll_history, None)
+    stats = await asyncio.to_thread(db.stats)
+    servers = await asyncio.to_thread(db.all_servers)
+    stat_rows = await asyncio.to_thread(db.server_stats, None)
+    counts = await asyncio.to_thread(db.anomaly_counts, None)
+    names = {s["server_key"]: s["name"] for s in servers}
+
+    peak_players = peak_servers = None
+    for r in polls:
+        pc, sc = r["player_count"], r["server_count"]
+        if pc is not None and (peak_players is None or pc > peak_players["v"]):
+            peak_players = {"v": pc, "ts": r["ts"]}
+        if sc is not None and (peak_servers is None or sc > peak_servers["v"]):
+            peak_servers = {"v": sc, "ts": r["ts"]}
+
+    daily = _daily([r for r in polls if r["player_count"] is not None],
+                   "ts", "player_count")
+    busiest_day = max(daily, key=lambda d: d["peak"]) if daily else None
+
+    top_peak = most_tracked = None
+    for r in stat_rows:
+        k = r["server_key"]
+        if r["peak"] is not None and (top_peak is None
+                                      or r["peak"] > top_peak["v"]):
+            top_peak = {"v": r["peak"], "key": k, "name": names.get(k, k)}
+        if most_tracked is None or r["snaps"] > most_tracked["v"]:
+            most_tracked = {"v": r["snaps"], "key": k, "name": names.get(k, k)}
+
+    top_bot = top_anom = None
+    for k, c in counts.items():
+        if c.get("bot_spikes") and (top_bot is None
+                                    or c["bot_spikes"] > top_bot["v"]):
+            top_bot = {"v": c["bot_spikes"], "key": k, "name": names.get(k, k)}
+        if c.get("total") and (top_anom is None
+                               or c["total"] > top_anom["v"]):
+            top_anom = {"v": c["total"], "key": k, "name": names.get(k, k)}
+
+    return web.json_response({
+        "peak_players": peak_players,
+        "peak_servers": peak_servers,
+        "busiest_day": busiest_day,
+        "top_peak_server": top_peak,
+        "most_tracked": most_tracked,
+        "top_bot_server": top_bot,
+        "top_anomaly_server": top_anom,
+        "first_poll": polls[0]["ts"] if polls else None,
+        "stats": dict(stats),
+    })
+
+
+async def api_series(request):
+    """Player history for a hand-picked set of servers (custom compare)."""
+    period = request.query.get("period", "all")
+    since = _since(period)
+    keys = [k for k in request.query.get("keys", "").split(",") if k][:20]
+
+    out = []
+    for k in keys:
+        srv = await asyncio.to_thread(db.get_server, k)
+        if srv is None:
+            continue
+        hist = await asyncio.to_thread(db.server_history, k, None, since)
+        out.append({
+            "name": srv["name"], "key": k,
+            "points": [[r["ts"], r["players"]]
+                       for r in _downsample(hist, 400)],
+        })
+    return web.json_response({"series": out, "period": period})
+
+
+async def api_export(request):
+    """Download any dataset as CSV or JSON."""
+    dataset = request.query.get("dataset", "players")
+    fmt = request.query.get("format", "csv").lower()
+    period = request.query.get("period", "all")
+    since = _since(period)
+    key = request.query.get("key") or None
+
+    headers, rows = [], []
+    if dataset == "players":
+        polls = await asyncio.to_thread(db.poll_history, since)
+        headers = ["timestamp", "players", "servers"]
+        rows = [[r["ts"], r["player_count"], r["server_count"]]
+                for r in polls]
+    elif dataset == "servers":
+        servers = await asyncio.to_thread(db.all_servers)
+        stat_rows = await asyncio.to_thread(db.server_stats, since)
+        counts = await asyncio.to_thread(db.anomaly_counts, since)
+        poll_count = len(await asyncio.to_thread(db.poll_history, since))
+        stat_by = {r["server_key"]: r for r in stat_rows}
+        headers = ["server_key", "name", "status", "first_seen", "last_seen",
+                   "peak", "mean", "snapshots", "uptime_pct", "anomalies",
+                   "alerts", "bot_spikes"]
+        for s in servers:
+            k = s["server_key"]
+            st = stat_by.get(k)
+            c = counts.get(k, {})
+            snaps = st["snaps"] if st else 0
+            rows.append([k, s["name"], s["status"], s["first_seen"],
+                         s["last_seen"], (st["peak"] or 0) if st else 0,
+                         round((st["mean"] or 0.0), 1) if st else 0.0,
+                         snaps, _uptime(snaps, poll_count),
+                         c.get("total", 0), c.get("alerts", 0),
+                         c.get("bot_spikes", 0)])
+    elif dataset == "anomalies":
+        type_ = request.query.get("type") or None
+        severity = request.query.get("severity") or None
+        a = await asyncio.to_thread(db.query_anomalies, key, type_,
+                                    severity, since, 1_000_000)
+        headers = ["timestamp", "server_key", "name", "type", "severity",
+                   "detail"]
+        rows = [[r["ts"], r["server_key"], r["name"], r["type"],
+                 r["severity"], r["detail"]] for r in a]
+    elif dataset == "server":
+        if not key:
+            return web.json_response({"error": "key required"}, status=400)
+        hist = await asyncio.to_thread(db.server_history, key, None, since)
+        headers = ["timestamp", "name", "players", "hbcounter"]
+        rows = [[r["ts"], r["name"], r["players"], r["hbcounter"]]
+                for r in hist]
+    else:
+        return web.json_response({"error": "unknown dataset"}, status=400)
+
+    fname = f"ao_{dataset}_{period}.{fmt}"
+    disp = {"Content-Disposition": f'attachment; filename="{fname}"'}
+    if fmt == "json":
+        return web.json_response([dict(zip(headers, r)) for r in rows],
+                                 headers=disp)
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(headers)
+    writer.writerows(rows)
+    return web.Response(text=buf.getvalue(), content_type="text/csv",
+                        headers=disp)
+
+
 async def index(request):
     path = os.path.join(WEB_DIR, "index.html")
     try:
@@ -359,6 +529,10 @@ async def start():
     app.router.add_get("/api/hb", api_hb)
     app.router.add_get("/api/anomalies", api_anomalies)
     app.router.add_get("/api/deadservers", api_deadservers)
+    app.router.add_get("/api/activity", api_activity)
+    app.router.add_get("/api/records", api_records)
+    app.router.add_get("/api/series", api_series)
+    app.router.add_get("/api/export", api_export)
 
     runner = web.AppRunner(app)
     await runner.setup()
