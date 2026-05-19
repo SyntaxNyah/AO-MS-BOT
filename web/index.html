@@ -1335,6 +1335,25 @@ async function renderMS(view){
     "environment variables on the master server."
   ));
 
+  rc.appendChild(infoBlock(
+    "<b style='color:var(--txt)'>Staying on the list</b><br>"+
+    "A server is kept in the ranked list as long as it keeps sending heartbeats. "+
+    "If a server stops heartbeating it is dropped after "+
+    "<b style='color:var(--txt)'>60&nbsp;minutes</b> of silence — so a server has a "+
+    "full hour to re-ping before it falls off the list. This window is configurable "+
+    "via the <code style='color:var(--accent)'>MS_HEARTBEAT_EXPIRY_MINUTES</code> "+
+    "environment variable on the master server."
+  ));
+
+  rc.appendChild(infoBlock(
+    "<b style='color:var(--txt)'>The list is always fresh</b><br>"+
+    "The <code style='color:var(--accent)'>GET /servers</code> endpoint responds with "+
+    "<code style='color:var(--accent)'>Cache-Control: no-store</code>, so Cloudflare "+
+    "(and any other intermediate cache) never serves a stale server list. "+
+    "Every poll from a game client reaches the origin and returns the current, "+
+    "freshly ranked set of servers."
+  ));
+
   view.appendChild(rc);
 }
 
