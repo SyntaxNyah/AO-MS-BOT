@@ -8,7 +8,7 @@ import aiohttp
 import database as db
 from anomaly import analyze_hb, analyze_players
 from config import (BOT_BASELINE_WINDOW, MS_URLS, POLL_INTERVAL_MINUTES,
-                    RELIABLE_GAP_FACTOR)
+                    RELIABLE_GAP_FACTOR, ms_label, ms_rules)
 
 log = logging.getLogger("monitor")
 
@@ -91,9 +91,12 @@ def _opt_port(value):
     return port if port > 0 else None
 
 
-def _mk(ts, key, name, type_, severity, detail):
+def _mk(ts, key, name, type_, severity, detail, master=None):
+    """Build an anomaly record. `master` names the master server the affected
+    server is listed on, so alerts for different masters stay distinguishable."""
     return {"ts": ts, "server_key": key, "name": name,
-            "type": type_, "severity": severity, "detail": detail}
+            "type": type_, "severity": severity, "detail": detail,
+            "master": master}
 
 
 async def run_poll():
@@ -126,6 +129,11 @@ async def run_poll():
     for s in servers:
         key = server_key(s)
         current_keys.add(key)
+        # Each master server has its own heartbeat rules and label; anomalies
+        # for this server are analysed and tagged with whichever master it is
+        # listed on, so the two masters' alerts never get mixed together.
+        master = ms_label(s["source"])
+        rules = ms_rules(s["source"])
         existing = db.get_server(key)
         prev_snap = db.latest_snapshot(key)
         was_online = existing is not None and existing["status"] == "online"
@@ -134,15 +142,17 @@ async def run_poll():
             db.upsert_server(key, s["ip"], s["port"], s["name"], now_iso,
                              s["ws_port"], s["wss_port"], s["source"])
             anomalies.append(_mk(now_iso, key, s["name"], "new_server", "info",
-                                 "New server appeared on the master list."))
+                                 f"New server appeared on the {master} "
+                                 "master list.", master=master))
         else:
             if existing["status"] == "offline":
                 anomalies.append(_mk(now_iso, key, s["name"], "reappeared", "low",
-                                     "Server is back on the master list."))
+                                     f"Server is back on the {master} master "
+                                     "list.", master=master))
             elif existing["name"] != s["name"]:
                 anomalies.append(_mk(now_iso, key, s["name"], "name_change", "low",
                                      f"Renamed: '{existing['name']}' -> "
-                                     f"'{s['name']}'."))
+                                     f"'{s['name']}'.", master=master))
             db.touch_server(key, s["name"], now_iso,
                             s["ws_port"], s["wss_port"], s["source"])
 
@@ -150,9 +160,10 @@ async def run_poll():
             gap = (now - datetime.fromisoformat(prev_snap["ts"])).total_seconds() / 60.0
             reliable = gap_reliable and was_online
             result = analyze_hb(prev_snap["hbcounter"], s["hbcounter"], gap,
-                                reliable=reliable)
+                                reliable=reliable, rules=rules)
             if result:
-                anomalies.append(_mk(now_iso, key, s["name"], *result))
+                anomalies.append(_mk(now_iso, key, s["name"], *result,
+                                     master=master))
 
         # Player-count / bot-pattern check: a near-empty server filling up over
         # a poll or two looks like an automated bot fill.
@@ -165,7 +176,8 @@ async def run_poll():
             if new_state != prev_state:
                 db.set_bot_state(key, new_state)
             if p_result:
-                anomalies.append(_mk(now_iso, key, s["name"], *p_result))
+                anomalies.append(_mk(now_iso, key, s["name"], *p_result,
+                                     master=master))
 
         db.add_snapshot(key, now_iso, s["name"], s["players"], s["hbcounter"])
 
@@ -173,9 +185,11 @@ async def run_poll():
     for row in db.online_servers():
         if row["server_key"] not in current_keys:
             db.set_server_status(row["server_key"], "offline")
+            master = ms_label(row["source"])
             anomalies.append(_mk(now_iso, row["server_key"], row["name"],
                                  "disappeared", "alert",
-                                 "Server vanished from the master list."))
+                                 f"Server vanished from the {master} master "
+                                 "list.", master=master))
 
     total_players = sum(s["players"] for s in servers)
     # Keep each master server's counts separate so the trend never mixes them.

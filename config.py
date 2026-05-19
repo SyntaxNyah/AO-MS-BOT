@@ -93,6 +93,70 @@ HB_RESTART_WINDOW = 35
 # faster than this never had time to actually restart -- likely a manual reset.
 HB_REAL_RESTART_MINUTES = 35
 
+# --- Per-master-server anomaly rules ---
+# The bot polls more than one master server, and they do not all behave the
+# same way -- so each master gets its own heartbeat-analysis profile and its
+# anomalies are labelled with the master they came from. Alerts for the two
+# masters therefore stay clearly separate even when they share a channel.
+#
+# Vanilla Attorney Online master: publishes each server's hbcounter only every
+# few minutes, so the counter arrives in batchy +20-30 leaps and needs
+# generous slack. It caps/rolls per HB_CAP / ROLLOVER_DROP above.
+#
+# Umineko Online master (Nyan-AO-Master-Server): clock-anchored. It advances
+# each server's counter by exactly the whole minutes of master-verified uptime
+# elapsed, so the counter climbs smoothly ~1/min and cannot be inflated by
+# heartbeat flooding. It caps at 10080 and rolls over to 9000. Tighter
+# tolerances apply, and its rollover model differs from vanilla.
+
+# Which polled masters are the Umineko-style master. Any source URL listed
+# here is analysed with the Umineko profile; every other master uses vanilla.
+MS_UMINEKO_URLS = _list("MS_UMINEKO_URL", [
+    "https://servers.umineko.online/servers",
+])
+
+VANILLA_HB_RULES = {
+    "label": "Attorney Online",
+    "hb_cap": HB_CAP,
+    "rollover_drop": ROLLOVER_DROP,
+    "hb_rate_max": HB_RATE_MAX,
+    "hb_margin": HB_MARGIN,
+    "hb_jump_margin": HB_JUMP_MARGIN,
+    "hb_restart_window": HB_RESTART_WINDOW,
+    "hb_real_restart_minutes": HB_REAL_RESTART_MINUTES,
+}
+
+UMINEKO_HB_RULES = {
+    "label": "Umineko Online",
+    "hb_cap": _int("MS_UMINEKO_HBCOUNTER_CAP", 10080),
+    "rollover_drop": _int("MS_UMINEKO_HBCOUNTER_ROLLOVER_DROP", 1080),
+    # Clock-anchored: climbs ~1/min and cannot be inflated, so little slack.
+    "hb_rate_max": 1.5,
+    "hb_margin": 4,
+    # The counter does not arrive in big batchy leaps -- a modest jump margin.
+    "hb_jump_margin": 8,
+    # Registration sets the counter to 1, so a restarted server reads near 0.
+    "hb_restart_window": 10,
+    # Stale servers are held on the list ~60 min, so a genuine down-and-back
+    # cycle leaves at least that long a gap since the last reading.
+    "hb_real_restart_minutes": 60,
+}
+
+
+def ms_rules(source_url):
+    """Return the heartbeat-analysis rule profile for the master that listed a
+    server. Umineko-style masters use the Umineko profile; every other master
+    uses the vanilla Attorney Online profile."""
+    if source_url and source_url in MS_UMINEKO_URLS:
+        return UMINEKO_HB_RULES
+    return VANILLA_HB_RULES
+
+
+def ms_label(source_url):
+    """Human-readable name of the master server a `source` URL refers to."""
+    return ms_rules(source_url)["label"]
+
+
 # --- Player-count / bot-pattern analysis ---
 # A server that normally sits near-empty suddenly filling with players over a
 # poll or two looks like an automated bot fill, not organic traffic. A jump to

@@ -1,8 +1,12 @@
 """Heartbeat-counter and player-count analysis.
 
-A server's hbcounter rises by roughly 1 per minute. When it reaches HB_CAP it
-rolls over and continues from (HB_CAP - ROLLOVER_DROP); that is normal. Any
-change the rate model and rollover cannot explain is flagged.
+A server's hbcounter rises by roughly 1 per minute. When it reaches its cap it
+rolls over and continues from (cap - rollover_drop); that is normal. Any change
+the rate model and rollover cannot explain is flagged.
+
+The cap, rollover and tolerances differ per master server, so analyze_hb takes
+a `rules` profile (see config.ms_rules) -- the vanilla Attorney Online master
+and the Umineko Online master each get their own rules.
 
 The player count is watched separately: a near-empty server that suddenly
 fills with players over a poll or two is flagged as a suspected bot pattern.
@@ -10,13 +14,15 @@ fills with players over a poll or two is flagged as a suspected bot pattern.
 import statistics
 
 from config import (BOT_BASELINE_MAX, BOT_BASELINE_WINDOW, BOT_SPIKE_MAX,
-                    BOT_SPIKE_MIN, BOT_SPIKE_POLLS, HB_CAP, HB_JUMP_MARGIN,
-                    HB_MARGIN, HB_RATE_MAX, HB_REAL_RESTART_MINUTES,
-                    HB_RESTART_WINDOW, ROLLOVER_DROP)
+                    BOT_SPIKE_MIN, BOT_SPIKE_POLLS, VANILLA_HB_RULES)
 
 
-def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True):
+def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True, rules=None):
     """Compare a server's heartbeat counter between two polls.
+
+    `rules` is the per-master rule profile (see config.ms_rules): it carries
+    the cap/rollover values and tolerances for whichever master listed the
+    server. When omitted the vanilla Attorney Online profile is used.
 
     Returns (type, severity, detail), or None when the change looks normal.
     `reliable` should be False when the gap between polls is unusually long or
@@ -25,46 +31,58 @@ def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True):
     if prev_hb is None or cur_hb is None:
         return None
 
+    rules = rules or VANILLA_HB_RULES
+    hb_cap = rules["hb_cap"]
+    rollover_drop = rules["rollover_drop"]
+    rate_max = rules["hb_rate_max"]
+    margin = rules["hb_margin"]
+    jump_margin = rules["hb_jump_margin"]
+    restart_window = rules["hb_restart_window"]
+    real_restart_minutes = rules["hb_real_restart_minutes"]
+    label = rules["label"]
+
     elapsed_min = max(elapsed_min, 0.5)
-    expected_max = elapsed_min * HB_RATE_MAX + HB_MARGIN
+    expected_max = elapsed_min * rate_max + margin
     delta = cur_hb - prev_hb
 
     if delta >= 0:
-        # An upward jump is not alarming. The master server only publishes the
-        # counter every few minutes, so when it finally refreshes the counter
-        # leaps by all the minutes it quietly accumulated meanwhile -- a +20-30
-        # step is routine. Only a jump well past that wide tolerance is worth
-        # noting, and even then it is never escalated to a high-severity alert.
-        jump_max = elapsed_min * HB_RATE_MAX + HB_JUMP_MARGIN
+        # An upward jump is not always alarming. The vanilla master only
+        # publishes the counter every few minutes, so when it refreshes the
+        # counter leaps by all the minutes it accumulated meanwhile -- a
+        # +20-30 step is routine there. The Umineko master is clock-anchored
+        # and climbs smoothly, so its jump margin is far tighter. Either way
+        # an upward jump is never escalated to a high-severity alert.
+        jump_max = elapsed_min * rate_max + jump_margin
         if delta > jump_max:
             sev = "low" if reliable else "info"
             return ("hb_jump", sev,
                     f"HB jumped +{delta} in {elapsed_min:.1f} min "
-                    f"(expected at most +{jump_max:.0f}).")
+                    f"(expected at most +{jump_max:.0f} on the {label} "
+                    f"master).")
         return None
 
-    # The counter decreased: a normal rollover at HB_CAP, a fresh restart, or a
-    # drop that nothing in the rate model can account for.
-    real_gain = delta + ROLLOVER_DROP            # value if one rollover happened
-    could_roll = (prev_hb + expected_max) >= HB_CAP
-    if could_roll and (-HB_MARGIN <= real_gain <= expected_max):
+    # The counter decreased: a normal rollover at the cap, a fresh restart, or
+    # a drop that nothing in the rate model can account for.
+    real_gain = delta + rollover_drop            # value if one rollover happened
+    could_roll = (prev_hb + expected_max) >= hb_cap
+    if could_roll and (-margin <= real_gain <= expected_max):
         return ("hb_rollover", "info",
                 f"HB rolled over {prev_hb} -> {cur_hb} "
-                f"(normal {HB_CAP // 1000}k reset).")
+                f"(normal {label} reset at {hb_cap}).")
 
-    # A counter that has fallen to the floor (<= HB_RESTART_WINDOW) usually
-    # means the server was taken down and brought back. But a genuine restart
-    # takes time: the master list holds a dead entry for ~30 min, so a real
-    # down-and-back cycle leaves a long gap since the last reading. If the
-    # counter slammed to the floor with less than HB_REAL_RESTART_MINUTES
-    # elapsed, the server never had time to actually go down -- that points to
-    # the counter being reset by hand.
-    if 0 <= cur_hb <= HB_RESTART_WINDOW:
-        if elapsed_min < HB_REAL_RESTART_MINUTES:
+    # A counter that has fallen to the floor (<= restart_window) usually means
+    # the server was taken down and brought back. But a genuine restart takes
+    # time: the master holds a dead entry for a while, so a real down-and-back
+    # cycle leaves a long gap since the last reading. If the counter slammed to
+    # the floor with less than real_restart_minutes elapsed, the server never
+    # had time to actually go down -- that points to a hand-reset counter.
+    if 0 <= cur_hb <= restart_window:
+        if elapsed_min < real_restart_minutes:
             return ("hb_reset", "alert",
                     f"HB slammed {prev_hb} -> {cur_hb} after only "
                     f"{elapsed_min:.1f} min -- too fast for a genuine restart "
-                    f"({HB_REAL_RESTART_MINUTES} min), likely a manual reset.")
+                    f"({real_restart_minutes} min on the {label} master), "
+                    f"likely a manual reset.")
         return ("hb_restart", "info",
                 f"HB reset {prev_hb} -> {cur_hb} -- server looks restarted "
                 f"(counter within restart range after a {elapsed_min:.0f} min "
@@ -74,7 +92,7 @@ def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True):
     note = "" if reliable else " (long polling gap -- unverified)"
     return ("hb_drop", sev,
             f"HB DROPPED {prev_hb} -> {cur_hb} ({delta}) -- "
-            f"not explained by a normal rollover{note}.")
+            f"not explained by a normal {label} rollover{note}.")
 
 
 def analyze_players(recent_players, cur_players, prev_state="normal"):
