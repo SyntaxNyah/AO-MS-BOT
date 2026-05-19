@@ -13,7 +13,12 @@ fills with players over a poll or two is flagged as a suspected bot pattern.
 """
 import statistics
 
-from config import (BOT_BASELINE_MAX, BOT_BASELINE_WINDOW, BOT_SPIKE_MAX,
+from config import (BOT_BASELINE_MAX, BOT_BASELINE_WINDOW,
+                    BOT_BUSY_NETWORK_MEDIAN, BOT_COPYCAT_MIN_COUNT,
+                    BOT_COPYCAT_MIN_PEERS, BOT_IMPLAUSIBLE_MIN,
+                    BOT_INSTANT_MAX_BASELINE, BOT_PLATEAU_MIN,
+                    BOT_PLATEAU_POLLS, BOT_POPULAR_BURST_FACTOR,
+                    BOT_POPULAR_PEAK_MIN, BOT_RAMP_RATIO, BOT_SPIKE_MAX,
                     BOT_SPIKE_MIN, BOT_SPIKE_POLLS, VANILLA_HB_RULES)
 
 
@@ -98,47 +103,155 @@ def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True, rules=None):
             f"not explained by a normal {label} rollover{note}.")
 
 
-def analyze_players(recent_players, cur_players, prev_state="normal"):
+def analyze_players(recent_players, cur_players, prev_state="normal",
+                    prev_baseline=None, server_peak=None, peer_counts=None):
     """Spot a bot-like player burst on a normally near-empty server.
 
     `recent_players` is the server's player counts from prior polls,
     oldest-first and excluding the current poll. `cur_players` is this poll's
     count. `prev_state` is the server's stored bot-pattern state -- "normal"
-    or "spike".
+    or "spike". `prev_baseline` is the baseline value captured at the moment
+    the spike began (kept across polls so substitution stays stable).
 
-    Returns (new_state, anomaly) where anomaly is (type, severity, detail) or
-    None. A sudden jump to BOT_SPIKE_MIN+ players from a baseline at or below
-    BOT_BASELINE_MAX is reported as `bot_spike`; the burst subsiding is
-    reported once as `bot_spike_end` so the data reflects both edges.
+    `server_peak` is the server's all-time peak (or peak over the recent
+    history available); when it is at or above BOT_POPULAR_PEAK_MIN the
+    server is treated as "popular" and its burst threshold is scaled up so
+    a regular crowd never re-flags. `peer_counts` is this poll's player
+    count on every *other* server listed on the same master -- it lets the
+    detector see the wider network state and tell coordinated fills (many
+    servers report the same count) apart from a busy night (many servers up
+    organically).
+
+    Returns (new_state, new_baseline, filtered_players, anomaly).
+      - `new_state`         next bot_state to persist
+      - `new_baseline`      baseline to persist (None when not in a spike)
+      - `filtered_players`  value safe to store in snapshots / poll totals;
+                            equals cur_players normally, the pre-spike
+                            baseline while a spike is in progress
+      - `anomaly`           (type, severity, detail) or None
+
+    Detection covers three obvious bot-fill shapes:
+      * burst   -- jump from a near-empty baseline to the effective spike
+                   minimum (scaled up on popular servers, suppressed when
+                   the whole network is busy)
+      * instant -- single-poll jump from baseline <= BOT_INSTANT_MAX_BASELINE
+                   straight to BOT_SPIKE_MIN+ (no organic ramp)
+      * plateau -- the same non-trivial player count across BOT_PLATEAU_POLLS
+                   in a row (real activity wobbles by 1-2 per minute)
+    A burst above BOT_IMPLAUSIBLE_MIN, or one whose exact count is mirrored
+    on BOT_COPYCAT_MIN_PEERS+ other servers this poll, is escalated.
+    The burst subsiding is reported once as `bot_spike_end` so the data
+    reflects both edges.
     """
     state = prev_state or "normal"
     if cur_players is None:
-        return state, None
+        return (state, prev_baseline, cur_players, None)
 
-    # A spike already in progress: wait for the burst to subside, then close
-    # it out once -- without re-alerting on every poll while it persists.
+    # A spike already in progress: substitute the captured baseline so the
+    # stored player count stays at its pre-spike level. Wait for the burst to
+    # subside, then close it out once -- without re-alerting every poll.
     if state == "spike":
+        baseline = prev_baseline if prev_baseline is not None else 0
         if cur_players < BOT_SPIKE_MIN:
-            return ("normal", ("bot_spike_end", "info",
-                    f"Player count fell back to {cur_players} -- the "
-                    "suspected bot burst has subsided."))
-        return ("spike", None)
+            return ("normal", None, cur_players,
+                    ("bot_spike_end", "info",
+                     f"Player count fell back to {cur_players} -- the "
+                     "suspected bot burst has subsided."))
+        return ("spike", baseline, baseline, None)
 
     window = [p for p in recent_players[-BOT_BASELINE_WINDOW:] if p is not None]
     if len(window) < 3:
-        return (state, None)
+        return (state, None, cur_players, None)
 
     # Exclude the freshest polls from the baseline so a burst that is still
     # building cannot raise the baseline it is being measured against.
     edge = max(BOT_SPIKE_POLLS - 1, 0)
     baseline_part = window[:-edge] if edge and len(window) > edge else window
     baseline = statistics.median(baseline_part)
+    baseline_store = int(round(baseline))
 
-    if baseline <= BOT_BASELINE_MAX and cur_players >= BOT_SPIKE_MIN:
-        band = ("" if cur_players <= BOT_SPIKE_MAX
-                else f" -- above the usual {BOT_SPIKE_MIN}-{BOT_SPIKE_MAX} band")
-        return ("spike", ("bot_spike", "alert",
-                f"Player count surged to {cur_players} from a baseline of "
-                f"~{baseline:.0f} within {BOT_SPIKE_POLLS} poll(s){band} -- "
-                "looks like an automated bot fill, not organic traffic."))
-    return (state, None)
+    # Plateau: the same non-trivial count held perfectly across many polls.
+    # Organic counts always wobble, so a flat line of identical readings is a
+    # bot tell even when it never crosses the burst threshold.
+    plateau_run = [cur_players] + list(reversed(
+        [p for p in recent_players if p is not None]))
+    if (cur_players >= BOT_PLATEAU_MIN and len(plateau_run) >= BOT_PLATEAU_POLLS
+            and all(p == cur_players
+                    for p in plateau_run[:BOT_PLATEAU_POLLS])):
+        return ("spike", baseline_store, baseline_store,
+                ("bot_spike", "alert",
+                 f"Player count held flat at {cur_players} across "
+                 f"{BOT_PLATEAU_POLLS} polls -- organic traffic always "
+                 "wobbles, this is a bot-fill plateau."))
+
+    # Popular-server lenience: a server with a meaningful historical peak is
+    # known to draw a crowd. Scale the burst threshold by its peak so the
+    # regular show that fills the room every weekend does not look like a
+    # bot fill. Obvious tells below still fire regardless of popularity.
+    effective_spike_min = BOT_SPIKE_MIN
+    if server_peak is not None and server_peak >= BOT_POPULAR_PEAK_MIN:
+        effective_spike_min = max(
+            BOT_SPIKE_MIN, int(server_peak * BOT_POPULAR_BURST_FACTOR))
+
+    # Cross-server context: how many *other* servers on this master report
+    # exactly the same non-trivial count this poll (copycat), and is the
+    # whole network busy right now (organic event vs. one-off bot fill).
+    peers = [p for p in (peer_counts or []) if p is not None]
+    copycat_peers = (
+        sum(1 for p in peers if p == cur_players)
+        if cur_players >= BOT_COPYCAT_MIN_COUNT else 0)
+    peer_median = statistics.median(peers) if peers else 0
+    busy_network = peer_median >= BOT_BUSY_NETWORK_MEDIAN
+
+    if baseline <= BOT_BASELINE_MAX and cur_players >= effective_spike_min:
+        # Look at the previous reading: a real ramp climbs through the
+        # baseline band first, so going from near-zero straight to a fully
+        # loaded server in a single poll is "instant" rather than "sudden".
+        prev = recent_players[-1] if recent_players else None
+        instant = (prev is not None and prev <= BOT_INSTANT_MAX_BASELINE
+                   and baseline <= BOT_INSTANT_MAX_BASELINE)
+        implausible = cur_players >= BOT_IMPLAUSIBLE_MIN
+        copycat = copycat_peers >= BOT_COPYCAT_MIN_PEERS
+
+        # Ramp guard: if the previous poll was already well on the way to the
+        # current level, this is organic growth (someone advertised the room,
+        # a show is starting), not a bot step. Implausible or copycat counts
+        # skip the guard -- those shapes are never organic.
+        if (not implausible and not copycat and prev is not None
+                and prev >= cur_players * BOT_RAMP_RATIO):
+            return (state, None, cur_players, None)
+
+        # Busy-network lenience: when the wider network is also lit up, the
+        # spike most likely belongs to a real event. Step-shaped fills
+        # (instant) and the obvious tells (implausible, copycat) still fire
+        # because those shapes do not appear in organic crowds.
+        if busy_network and not (instant or implausible or copycat):
+            return (state, None, cur_players, None)
+
+        if implausible:
+            detail = (f"Player count surged to {cur_players} from a baseline "
+                      f"of ~{baseline:.0f} -- {cur_players} concurrent "
+                      "players is implausible for this server, this is an "
+                      "automated bot fill.")
+        elif copycat:
+            detail = (f"Player count surged to {cur_players} from a baseline "
+                      f"of ~{baseline:.0f}, and {copycat_peers} other "
+                      f"server(s) on this master report the exact same "
+                      f"{cur_players}-player count this poll -- a copycat "
+                      "/ coordinated bot fill, not organic traffic.")
+        elif instant:
+            detail = (f"Player count jumped from {prev} to {cur_players} in a "
+                      f"single poll (baseline ~{baseline:.0f}) -- no organic "
+                      "ramp, this is an automated bot fill.")
+        else:
+            band = ("" if cur_players <= BOT_SPIKE_MAX
+                    else f" -- above the usual {BOT_SPIKE_MIN}-"
+                         f"{BOT_SPIKE_MAX} band")
+            detail = (f"Player count surged to {cur_players} from a baseline "
+                      f"of ~{baseline:.0f} within {BOT_SPIKE_POLLS} "
+                      f"poll(s){band} -- looks like an automated bot fill, "
+                      "not organic traffic.")
+
+        return ("spike", baseline_store, baseline_store,
+                ("bot_spike", "alert", detail))
+    return (state, None, cur_players, None)

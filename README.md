@@ -78,15 +78,102 @@ High-severity integrity alerts (including bot bursts) ping `@here`.
 
 ### Bot-pattern detection
 
-A server that normally sits near-empty suddenly gaining **40&ndash;100 players
-over just a poll or two** looks like an automated bot fill rather than organic
-traffic. On every poll the bot measures each server's baseline (the median of
-its recent player counts) and flags a `bot_spike` when a server whose baseline
-is at or below **8 players** jumps to **40 or more**. A gradual, organic rise
-keeps the baseline high enough that it is *not* flagged &mdash; only sudden
-bursts are. When the burst subsides the bot logs a `bot_spike_end` so the data
-reflects both the start and the end of the event. These thresholds are tunable
-in `config.py` (`BOT_SPIKE_MIN`, `BOT_BASELINE_MAX`, `BOT_SPIKE_POLLS`).
+Bot fills look nothing like real player activity, and the bot exploits every
+one of those tells. The goal is two-fold:
+
+1. **Let servers grow organically without false flags.** A popular show
+   filling a room over several minutes is not a bot.
+2. **Catch the obvious bot shapes that organic traffic never produces** &mdash;
+   even on a server that is normally busy.
+
+Anything flagged as a `bot_spike` also has its **player count substituted out
+of the stored data** while the burst lasts (see "Data substitution" below),
+so the inflated readings never contaminate snapshots, totals or graphs. The
+raw master-reported value is preserved in `snapshots.players_raw` for review.
+
+#### What gets flagged
+
+| Shape | What the bot sees | Why organic traffic never does this |
+|-------|-------------------|--------------------------------------|
+| **Burst**       | A near-empty server (baseline &le; `BOT_BASELINE_MAX`, default 8) jumps to `BOT_SPIKE_MIN`+ players (default 40) over the last `BOT_SPIKE_POLLS` polls (default 2) | Real fills ramp up &mdash; people show up over minutes |
+| **Instant max-out** | The previous poll was &le; `BOT_INSTANT_MAX_BASELINE` (default 1) and this poll is already `BOT_SPIKE_MIN`+ | A single-poll step from nothing to a packed room is impossible organically |
+| **Plateau**     | The exact same non-trivial count (&ge; `BOT_PLATEAU_MIN`, default 20) for `BOT_PLATEAU_POLLS` polls in a row (default 8) | Real activity always wobbles by 1&ndash;2 every minute; spawned bot clients sit perfectly idle |
+| **Implausible** | A burst that crosses `BOT_IMPLAUSIBLE_MIN` (default 200) | Numbers like this do not appear organically on any AO server |
+| **Copycat**     | A burst whose exact player count is mirrored by `BOT_COPYCAT_MIN_PEERS`+ other servers on the same master *this poll* (default 2 peers, count &ge; 10) | Independent servers do not coincidentally land on the same player count |
+
+When the burst subsides the bot logs a `bot_spike_end` so the data reflects
+both edges of the event.
+
+#### What does **not** get flagged (lenience rules)
+
+- **Organic ramps.** If the previous poll was already at `BOT_RAMP_RATIO`
+  (default 0.5) of the current count or higher, the bot treats it as
+  gradual growth and skips the burst alert. Step shapes (instant max-out,
+  implausible, copycat) ignore this rule &mdash; those are never organic.
+- **Popular servers.** A server with an all-time peak at or above
+  `BOT_POPULAR_PEAK_MIN` (default 25) is "known-busy". Its burst threshold is
+  scaled to `peak * BOT_POPULAR_BURST_FACTOR` (default &times; 2), so a
+  regular show that fills the room every weekend never re-flags. Obvious
+  tells (plateau, instant max-out, implausible, copycat) still fire &mdash;
+  popularity does not excuse a 0&rarr;300 jump or 8 identical readings in a
+  row.
+- **Busy-network nights.** Every poll the bot also looks at every *other*
+  server on the same master. When the network's median peer count is at or
+  above `BOT_BUSY_NETWORK_MEDIAN` (default 15), one server rising along with
+  the rest is treated as part of an event, not a one-off fill. Step shapes
+  and the obvious tells still fire.
+
+#### Data substitution
+
+The bot detector does not just alert &mdash; it **keeps the bot readings
+out of the stored data**. The moment a server enters a spike, the bot
+captures its pre-spike baseline (the median of its recent polls) into
+`servers.bot_baseline`. While the spike lasts:
+
+- `snapshots.players` is written as that captured baseline, so graphs and
+  per-server history stay at the server's real player count
+- `polls.player_count` and `poll_sources.player_count` sum the substituted
+  values, so global and per-master player-count trends never carry the
+  inflated burst
+- `snapshots.players_raw` keeps the raw master-reported number for forensic
+  review, so the unfiltered series is recoverable without polluting the
+  graphs
+
+When the count falls back below `BOT_SPIKE_MIN` the spike state clears and
+substitution stops. The "Botted" tab on the dashboard surfaces every
+attempt per master &mdash; how many bot fills each master has seen, how
+many distinct servers were affected, how many are currently spiking and a
+list of the latest offenders.
+
+#### Tunable thresholds
+
+Every detector knob is read from the environment so the bot can be retuned
+without a code change. Leave a variable blank (or unset) to keep its
+default. The full list:
+
+| Variable | Default | What it controls |
+|----------|---------|------------------|
+| `BOT_SPIKE_MIN` | `40` | Players needed for a burst to qualify |
+| `BOT_SPIKE_MAX` | `100` | Top of the typical bot-fill band (above this the alert message notes it cleared the band) |
+| `BOT_BASELINE_MAX` | `8` | A server whose recent median is at or below this is "normally empty" and eligible for burst detection |
+| `BOT_SPIKE_POLLS` | `2` | How many polls the burst must appear within |
+| `BOT_BASELINE_WINDOW` | `30` | How many recent snapshots define the baseline (~30 min at the default 1-min poll) |
+| `BOT_PLATEAU_POLLS` | `8` | Identical-count run length for the plateau detector |
+| `BOT_PLATEAU_MIN` | `20` | Plateau ignores trivial counts below this |
+| `BOT_INSTANT_MAX_BASELINE` | `1` | A prev-poll count at or below this turns a burst into an instant max-out |
+| `BOT_IMPLAUSIBLE_MIN` | `200` | Bursts at or above this are flagged regardless of any lenience |
+| `BOT_RAMP_RATIO` | `0.5` | Skip burst alert when the prior poll was already this fraction of the current count (gradual organic growth) |
+| `BOT_POPULAR_PEAK_MIN` | `25` | All-time peak at or above this marks a server as "popular" |
+| `BOT_POPULAR_BURST_FACTOR` | `2.0` | Popular server's burst threshold = `peak * factor` |
+| `BOT_BUSY_NETWORK_MEDIAN` | `15` | Median peer player count at or above this triggers busy-network lenience |
+| `BOT_COPYCAT_MIN_PEERS` | `2` | Number of other servers showing the same exact count to flag a copycat |
+| `BOT_COPYCAT_MIN_COUNT` | `10` | Copycat detection ignores counts below this |
+
+The same list is in `.env.example` with inline notes. Obvious tells
+(instant, plateau, implausible, copycat) ignore the ramp / popularity /
+busy-network lenience by design &mdash; those shapes are never organic,
+so making them strict-bypass keeps the detector useful even on a server
+or a network configured for very high tolerance.
 
 ### Graphs
 
@@ -272,17 +359,30 @@ a full dashboard with a tab for everything the bot tracks:
 - **Records** &mdash; all-time milestones: highest player count, busiest day,
   biggest server, most data collected and more
 - **Dead Servers** &mdash; servers absent long enough to be considered shut down
+- **Botted** &mdash; per-master scoreboard of suspected bot-fill attempts
+  with the currently-spiking count and the latest offenders (see
+  [Bot-pattern detection](#bot-pattern-detection))
 - **Master Server** &mdash; about our open-source master server and how to
   list your own AO server on it, with links to the master server and WebAO
   source code
 
-Every chart has hover tooltips, every period can be filtered to
-day/week/month/year/all, and clicking any server anywhere opens a detail
-view with an uptime timeline (online/offline strip with outages), player
-history, HB-counter history, daily breakdown and anomalies. Most tabs have
-CSV/JSON export buttons, and server and compare
-views have shareable links. The dashboard is strictly read-only &mdash; it
-never polls or posts anything.
+Every chart has hover tooltips, and **every tab can be filtered by day,
+week, month, year, all-time, or a specific UTC calendar day**. The named
+ranges (Day / Week / Month / Year / All time) are the pill buttons at the
+top of each tab; next to them is a date picker &mdash; pick any date and
+every chart, table, count, anomaly browser and export on the page rescopes
+to *just that UTC day*. Hit **Clear** next to the date picker to drop back
+to all-time. The selection sticks as you switch between tabs.
+
+Clicking any server anywhere opens a detail view with the server's
+**published room description** (when it publishes one on the master list),
+the WebAO join link, an uptime timeline (online/offline strip with
+outages), player history, HB-counter history, daily breakdown and
+anomalies. The description is also visible in the dashboard and Servers
+list as a clipped sub-line under each name (full text on hover). Most tabs
+have CSV/JSON export buttons, and server and compare views have shareable
+links. The dashboard is strictly read-only &mdash; it never polls or posts
+anything.
 
 It refreshes itself every 60 seconds. If you expose it to the internet, put it
 behind a reverse proxy (nginx, Caddy) for HTTPS, or keep `WEBSITE_HOST` on

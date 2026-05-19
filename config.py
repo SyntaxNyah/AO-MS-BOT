@@ -182,11 +182,68 @@ def ms_label(source_url):
 # poll or two looks like an automated bot fill, not organic traffic. A jump to
 # at least BOT_SPIKE_MIN players, within BOT_SPIKE_POLLS polls, on a server
 # whose baseline is at or below BOT_BASELINE_MAX, is flagged as a bot pattern.
-BOT_SPIKE_MIN = 40        # players: low end of a suspicious sudden burst
-BOT_SPIKE_MAX = 100       # players: high end of the typical bot-fill band
-BOT_BASELINE_MAX = 8      # a server averaging at/under this is "normally empty"
-BOT_SPIKE_POLLS = 2       # the burst must appear within this many polls
-BOT_BASELINE_WINDOW = 30  # how many recent snapshots define the baseline
+# Every threshold below is env-configurable so the detector can be retuned
+# without a code change. The defaults below are what ships out of the box.
+BOT_SPIKE_MIN = _int("BOT_SPIKE_MIN", 40)
+# players: low end of a suspicious sudden burst.
+BOT_SPIKE_MAX = _int("BOT_SPIKE_MAX", 100)
+# players: high end of the typical bot-fill band; bursts above this still
+# fire, the message just notes they cleared the band.
+BOT_BASELINE_MAX = _int("BOT_BASELINE_MAX", 8)
+# a server whose recent median is at or under this is "normally empty" and
+# eligible for burst detection. Raise it to make the detector more eager,
+# lower it to require an emptier baseline before flagging.
+BOT_SPIKE_POLLS = _int("BOT_SPIKE_POLLS", 2)
+# the burst must appear within this many polls; also controls how many
+# freshest readings are excluded from the baseline so a building burst
+# cannot raise the baseline it is being measured against.
+BOT_BASELINE_WINDOW = _int("BOT_BASELINE_WINDOW", 30)
+# how many recent snapshots define the baseline median (~30 minutes at
+# the default 1-minute poll interval).
+
+# Plateau pattern: organic player counts wobble by 1-2 every minute as people
+# come and go. A count that holds perfectly steady across many polls is a
+# bot-fill tell (the spawned clients all sit idle and never leave).
+BOT_PLATEAU_POLLS = _int("BOT_PLATEAU_POLLS", 8)
+BOT_PLATEAU_MIN = _int("BOT_PLATEAU_MIN", 20)
+
+# Instant max-out: a normally-empty server going straight to BOT_SPIKE_MIN+
+# players in a single poll, from a baseline at or below this threshold, has
+# no plausible organic explanation -- a real fill ramps up over minutes.
+BOT_INSTANT_MAX_BASELINE = _int("BOT_INSTANT_MAX_BASELINE", 1)
+
+# Implausibly large burst: numbers above this on a normally near-empty server
+# do not happen organically. Reported as an "alert" rather than the standard
+# burst severity so the dashboard surfaces them prominently.
+BOT_IMPLAUSIBLE_MIN = _int("BOT_IMPLAUSIBLE_MIN", 200)
+
+# Ramp guard: organic growth climbs gradually -- by the time a server reaches
+# burst level, the previous poll is already well on the way there. A bot fill
+# is a single step from near-empty straight to fully loaded. Skip the burst
+# alert when the previous poll was already at this fraction of the current
+# count or higher, so organic growth (e.g. a popular event filling up over
+# several minutes) is never mistaken for an automated fill.
+BOT_RAMP_RATIO = float(_str("BOT_RAMP_RATIO", "0.5"))
+
+# Popular-server lenience: a server whose all-time peak is at or above this
+# is treated as "known-busy". Its burst threshold is scaled up to
+# (peak * BOT_POPULAR_BURST_FACTOR), so a regular show that re-fills the room
+# every week is never re-flagged. Obvious tells (plateau, instant max-out,
+# implausible counts) keep firing regardless -- popularity does not excuse
+# perfectly-identical readings or 0->300 jumps.
+BOT_POPULAR_PEAK_MIN = _int("BOT_POPULAR_PEAK_MIN", 25)
+BOT_POPULAR_BURST_FACTOR = float(_str("BOT_POPULAR_BURST_FACTOR", "2.0"))
+
+# Cross-server context. The bot also looks at every *other* server on the
+# same master this poll. If the whole network is busy (median peer count
+# above BOT_BUSY_NETWORK_MEDIAN), one server rising with it is probably part
+# of an event, not a bot fill -- the regular burst alert is suppressed.
+# Conversely, if at least BOT_COPYCAT_MIN_PEERS other servers report the
+# EXACT SAME non-trivial player count (>= BOT_COPYCAT_MIN_COUNT) this poll,
+# that is a copycat / coordinated-fill tell and the detection is escalated.
+BOT_BUSY_NETWORK_MEDIAN = _int("BOT_BUSY_NETWORK_MEDIAN", 15)
+BOT_COPYCAT_MIN_PEERS = _int("BOT_COPYCAT_MIN_PEERS", 2)
+BOT_COPYCAT_MIN_COUNT = _int("BOT_COPYCAT_MIN_COUNT", 10)
 
 # --- Website / live dashboard ---
 # Set WEBSITE_ENABLED=1 to also serve a live web dashboard alongside the bot.
