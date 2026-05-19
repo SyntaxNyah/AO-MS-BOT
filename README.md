@@ -145,10 +145,35 @@ attempt per master &mdash; how many bot fills each master has seen, how
 many distinct servers were affected, how many are currently spiking and a
 list of the latest offenders.
 
-Every threshold above is tunable from the environment (e.g.
-`BOT_SPIKE_MIN`, `BOT_PLATEAU_POLLS`, `BOT_POPULAR_PEAK_MIN`,
-`BOT_BUSY_NETWORK_MEDIAN`); see the corresponding entries in `.env.example`
-for the full list.
+#### Tunable thresholds
+
+Every detector knob is read from the environment so the bot can be retuned
+without a code change. Leave a variable blank (or unset) to keep its
+default. The full list:
+
+| Variable | Default | What it controls |
+|----------|---------|------------------|
+| `BOT_SPIKE_MIN` | `40` | Players needed for a burst to qualify |
+| `BOT_SPIKE_MAX` | `100` | Top of the typical bot-fill band (above this the alert message notes it cleared the band) |
+| `BOT_BASELINE_MAX` | `8` | A server whose recent median is at or below this is "normally empty" and eligible for burst detection |
+| `BOT_SPIKE_POLLS` | `2` | How many polls the burst must appear within |
+| `BOT_BASELINE_WINDOW` | `30` | How many recent snapshots define the baseline (~30 min at the default 1-min poll) |
+| `BOT_PLATEAU_POLLS` | `8` | Identical-count run length for the plateau detector |
+| `BOT_PLATEAU_MIN` | `20` | Plateau ignores trivial counts below this |
+| `BOT_INSTANT_MAX_BASELINE` | `1` | A prev-poll count at or below this turns a burst into an instant max-out |
+| `BOT_IMPLAUSIBLE_MIN` | `200` | Bursts at or above this are flagged regardless of any lenience |
+| `BOT_RAMP_RATIO` | `0.5` | Skip burst alert when the prior poll was already this fraction of the current count (gradual organic growth) |
+| `BOT_POPULAR_PEAK_MIN` | `25` | All-time peak at or above this marks a server as "popular" |
+| `BOT_POPULAR_BURST_FACTOR` | `2.0` | Popular server's burst threshold = `peak * factor` |
+| `BOT_BUSY_NETWORK_MEDIAN` | `15` | Median peer player count at or above this triggers busy-network lenience |
+| `BOT_COPYCAT_MIN_PEERS` | `2` | Number of other servers showing the same exact count to flag a copycat |
+| `BOT_COPYCAT_MIN_COUNT` | `10` | Copycat detection ignores counts below this |
+
+The same list is in `.env.example` with inline notes. Obvious tells
+(instant, plateau, implausible, copycat) ignore the ramp / popularity /
+busy-network lenience by design &mdash; those shapes are never organic,
+so making them strict-bypass keeps the detector useful even on a server
+or a network configured for very high tolerance.
 
 ### Graphs
 

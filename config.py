@@ -182,11 +182,24 @@ def ms_label(source_url):
 # poll or two looks like an automated bot fill, not organic traffic. A jump to
 # at least BOT_SPIKE_MIN players, within BOT_SPIKE_POLLS polls, on a server
 # whose baseline is at or below BOT_BASELINE_MAX, is flagged as a bot pattern.
-BOT_SPIKE_MIN = 40        # players: low end of a suspicious sudden burst
-BOT_SPIKE_MAX = 100       # players: high end of the typical bot-fill band
-BOT_BASELINE_MAX = 8      # a server averaging at/under this is "normally empty"
-BOT_SPIKE_POLLS = 2       # the burst must appear within this many polls
-BOT_BASELINE_WINDOW = 30  # how many recent snapshots define the baseline
+# Every threshold below is env-configurable so the detector can be retuned
+# without a code change. The defaults below are what ships out of the box.
+BOT_SPIKE_MIN = _int("BOT_SPIKE_MIN", 40)
+# players: low end of a suspicious sudden burst.
+BOT_SPIKE_MAX = _int("BOT_SPIKE_MAX", 100)
+# players: high end of the typical bot-fill band; bursts above this still
+# fire, the message just notes they cleared the band.
+BOT_BASELINE_MAX = _int("BOT_BASELINE_MAX", 8)
+# a server whose recent median is at or under this is "normally empty" and
+# eligible for burst detection. Raise it to make the detector more eager,
+# lower it to require an emptier baseline before flagging.
+BOT_SPIKE_POLLS = _int("BOT_SPIKE_POLLS", 2)
+# the burst must appear within this many polls; also controls how many
+# freshest readings are excluded from the baseline so a building burst
+# cannot raise the baseline it is being measured against.
+BOT_BASELINE_WINDOW = _int("BOT_BASELINE_WINDOW", 30)
+# how many recent snapshots define the baseline median (~30 minutes at
+# the default 1-minute poll interval).
 
 # Plateau pattern: organic player counts wobble by 1-2 every minute as people
 # come and go. A count that holds perfectly steady across many polls is a
