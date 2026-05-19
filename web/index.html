@@ -37,6 +37,15 @@
     border-color:var(--accent); font-weight:600; }
   .periods.masters { margin-top:0; align-items:center; }
   .masters-lbl { color:var(--dim); font-size:12px; margin-right:2px; }
+  .periods-date { display:inline-flex; align-items:center; gap:6px;
+    margin-left:10px; padding-left:10px; border-left:1px solid var(--line); }
+  input.dateinput { background:var(--panel2); color:var(--txt);
+    border:1px solid var(--line); border-radius:18px; padding:4px 10px;
+    font-size:12px; font-family:inherit; color-scheme:dark; }
+  .srvcell { display:flex; flex-direction:column; gap:2px; min-width:0; }
+  .srvdesc { color:var(--dim); font-size:11px; line-height:1.35;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+    max-width:360px; }
   .stats { display:grid; gap:13px; margin:18px 0;
     grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); }
   .stat { background:var(--panel); border:1px solid var(--line);
@@ -453,6 +462,15 @@ function legend(series){
 }
 
 // ---- shared bits ---------------------------------------------------------
+// Is the active period a YYYY-MM-DD date pick rather than a named range?
+function isDatePeriod(p){ return /^\d{4}-\d{2}-\d{2}$/.test(p||""); }
+// Today as YYYY-MM-DD in UTC -- matches what the backend expects.
+function todayUTC(){
+  const d=new Date();
+  const y=d.getUTCFullYear(),m=String(d.getUTCMonth()+1).padStart(2,"0"),
+        da=String(d.getUTCDate()).padStart(2,"0");
+  return y+"-"+m+"-"+da;
+}
 function periodBar(){
   const box=el("div","periods");
   for(const [v,l] of PERIODS){
@@ -460,6 +478,31 @@ function periodBar(){
     b.onclick=()=>{ state.period=v; render(); };
     box.appendChild(b);
   }
+  // Day-by-day date picker -- selecting a date sets state.period to that
+  // YYYY-MM-DD value, which every API endpoint reads as "just this UTC
+  // day". An explicit Clear restores "all time" so the named-range buttons
+  // remain useful.
+  const datebox=el("span","periods-date");
+  datebox.appendChild(el("span","masters-lbl","Day:"));
+  const inp=document.createElement("input");
+  inp.type="date";
+  inp.className="dateinput";
+  inp.max=todayUTC();
+  if(isDatePeriod(state.period)) inp.value=state.period;
+  inp.onchange=()=>{
+    if(inp.value){ state.period=inp.value; render(); }
+  };
+  datebox.appendChild(inp);
+  if(isDatePeriod(state.period)){
+    const clr=el("button",null,"Clear");
+    clr.onclick=()=>{ state.period="all"; render(); };
+    datebox.appendChild(clr);
+    const lbl=el("span","masters-lbl",
+      "showing UTC day "+state.period);
+    lbl.style.marginLeft="6px";
+    datebox.appendChild(lbl);
+  }
+  box.appendChild(datebox);
   return box;
 }
 // Short, human label for a master-server URL (its host, sans scheme/path).
@@ -606,8 +649,22 @@ async function renderDashboard(view){
   sc.querySelector("h2").appendChild(el("span","sub",dashSrv.length+" online"));
   if(!dashSrv.length) sc.appendChild(el("div","empty","No servers online."));
   else sc.appendChild(sortTable(
-    [{key:"name",label:"Server",cell:r=>{const a=el("a",null,r.name);
-        a.onclick=()=>openServer(r.key);return a;}},
+    [{key:"name",label:"Server",cell:r=>{
+        // Stack the name on top of the server-published description (when
+        // there is one) so the room concept is visible in the list without
+        // needing to open the detail sheet. The full description is also
+        // attached as a hover tooltip in case it was clipped.
+        const wrap=el("div","srvcell");
+        const a=el("a",null,r.name);
+        a.onclick=(ev)=>{ ev.stopPropagation(); openServer(r.key); };
+        wrap.appendChild(a);
+        if(r.description && String(r.description).trim()){
+          const d=el("div","srvdesc",clip(String(r.description).trim(),96));
+          d.title=String(r.description).trim();
+          wrap.appendChild(d);
+        }
+        return wrap;
+      }},
      {key:"players",label:"Players",num:true},
      {key:"hb",label:"HB",num:true,cell:r=>r.hb==null?"-":r.hb},
      {key:"status",label:"Status",cell:r=>statusPill(r.status)},
@@ -651,8 +708,18 @@ async function renderServers(view){
       (r.key||"").toLowerCase().includes(q));
     if(!rows.length) return el("div","empty","No servers match your search.");
     return sortTable([
-      {key:"name",label:"Server",cell:r=>{const a=el("a",null,r.name);
-        a.onclick=()=>openServer(r.key);return a;}},
+      {key:"name",label:"Server",cell:r=>{
+        const wrap=el("div","srvcell");
+        const a=el("a",null,r.name);
+        a.onclick=(ev)=>{ ev.stopPropagation(); openServer(r.key); };
+        wrap.appendChild(a);
+        if(r.description && String(r.description).trim()){
+          const d=el("div","srvdesc",clip(String(r.description).trim(),96));
+          d.title=String(r.description).trim();
+          wrap.appendChild(d);
+        }
+        return wrap;
+      }},
       {key:"key",label:"Address"},
       {key:"status",label:"Status",cell:r=>statusPill(r.status)},
       {key:"players",label:"Players",num:true,
@@ -1127,6 +1194,17 @@ async function openServer(key){
   const addr=el("p",null,s.server_key);
   addr.style.color="var(--dim)"; addr.style.fontSize="12px";
   sheet.appendChild(addr);
+  // Server-published room description from the master list, when present.
+  // Kept under the address so it sits between the title and the join CTA.
+  if(s.description && String(s.description).trim()){
+    const desc=el("p",null,String(s.description).trim());
+    desc.style.cssText=
+      "background:var(--panel2);border:1px solid var(--line);"+
+      "border-radius:8px;padding:10px 12px;margin:10px 0;"+
+      "font-size:13px;line-height:1.55;white-space:pre-wrap;"+
+      "word-break:break-word;";
+    sheet.appendChild(desc);
+  }
   sheet.appendChild(joinLink(d.webao,s.name,"joinbig"));
 
   const kv=el("div","kv");

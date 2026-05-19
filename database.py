@@ -101,6 +101,12 @@ def _migrate(c):
         c.execute("ALTER TABLE servers ADD COLUMN wss_port INTEGER")
     if "source" not in scols:
         c.execute("ALTER TABLE servers ADD COLUMN source TEXT")
+    if "description" not in scols:
+        # Free-text blurb the server itself publishes on the master list --
+        # surfaced in the dashboard so each server's room concept is visible
+        # without needing to click in and join. Servers that do not publish
+        # one keep it NULL; it is refreshed every poll a server is seen on.
+        c.execute("ALTER TABLE servers ADD COLUMN description TEXT")
 
     sncols = {r["name"] for r in c.execute("PRAGMA table_info(snapshots)")}
     if "players_raw" not in sncols:
@@ -163,22 +169,28 @@ def record_poll(ts, ok, server_count, player_count=0, by_source=None):
                  for src, agg in by_source.items()])
 
 
-def poll_history(since=None):
+def poll_history(since=None, until=None):
     """Successful polls oldest-first, for the global player-count graph.
 
-    `since` is an optional ISO timestamp lower bound (inclusive).
+    `since` and `until` are optional ISO timestamp bounds. `since` is
+    inclusive (>=); `until` is exclusive (<), so passing the start of the
+    next day yields exactly one day's polls when paired with that day's
+    start as `since`.
     """
     q = "SELECT ts, server_count, player_count FROM polls WHERE ok=1"
     params = []
     if since is not None:
         q += " AND ts>=?"
         params.append(since)
+    if until is not None:
+        q += " AND ts<?"
+        params.append(until)
     q += " ORDER BY id"
     with _db() as c:
         return c.execute(q, params).fetchall()
 
 
-def poll_source_history(since=None):
+def poll_source_history(since=None, until=None):
     """Per-master player/server counts for each successful poll, oldest-first.
 
     Returns rows of (ts, source, server_count, player_count) so the dashboard
@@ -193,6 +205,9 @@ def poll_source_history(since=None):
     if since is not None:
         q += " AND p.ts>=?"
         params.append(since)
+    if until is not None:
+        q += " AND p.ts<?"
+        params.append(until)
     q += " ORDER BY p.id"
     with _db() as c:
         return c.execute(q, params).fetchall()
@@ -213,26 +228,30 @@ def get_server(key):
 
 
 def upsert_server(key, ip, port, name, now, ws_port=None, wss_port=None,
-                  source=None):
+                  source=None, description=None):
     with _db() as c:
         c.execute(
             """INSERT INTO servers
                  (server_key, ip, port, name, first_seen, last_seen, status,
-                  ws_port, wss_port, source)
-               VALUES (?,?,?,?,?,?,'online',?,?,?)
+                  ws_port, wss_port, source, description)
+               VALUES (?,?,?,?,?,?,'online',?,?,?,?)
                ON CONFLICT(server_key) DO UPDATE SET
                  name=excluded.name, last_seen=excluded.last_seen,
                  status='online', ws_port=excluded.ws_port,
-                 wss_port=excluded.wss_port, source=excluded.source""",
-            (key, ip, port, name, now, now, ws_port, wss_port, source))
+                 wss_port=excluded.wss_port, source=excluded.source,
+                 description=excluded.description""",
+            (key, ip, port, name, now, now, ws_port, wss_port, source,
+             description))
 
 
-def touch_server(key, name, now, ws_port=None, wss_port=None, source=None):
+def touch_server(key, name, now, ws_port=None, wss_port=None, source=None,
+                 description=None):
     with _db() as c:
         c.execute(
             "UPDATE servers SET name=?, last_seen=?, status='online', "
-            "ws_port=?, wss_port=?, source=? WHERE server_key=?",
-            (name, now, ws_port, wss_port, source, key))
+            "ws_port=?, wss_port=?, source=?, description=? "
+            "WHERE server_key=?",
+            (name, now, ws_port, wss_port, source, description, key))
 
 
 def set_server_status(key, status):
@@ -311,17 +330,21 @@ def latest_snapshot(key):
             (key,)).fetchone()
 
 
-def server_history(key, limit=None, since=None):
+def server_history(key, limit=None, since=None, until=None):
     """Snapshots for a server, oldest-first.
 
-    limit=None returns full history. `since` is an optional ISO timestamp
-    lower bound (inclusive) used to graph by day/week/month/year.
+    limit=None returns full history. `since` and `until` are optional ISO
+    timestamp bounds (since inclusive, until exclusive) used to scope the
+    history to a day / week / month / year / specific calendar date.
     """
     where = "server_key=?"
     params = [key]
     if since is not None:
         where += " AND ts>=?"
         params.append(since)
+    if until is not None:
+        where += " AND ts<?"
+        params.append(until)
     with _db() as c:
         if limit is None:
             return c.execute(
@@ -333,19 +356,25 @@ def server_history(key, limit=None, since=None):
     return list(reversed(rows))
 
 
-def server_stats(since=None):
+def server_stats(since=None, until=None):
     """Per-server aggregates for the all-server comparison.
 
     Returns one row per server with snaps (snapshot count), peak and mean
     player counts -- computed in SQL so the full snapshot table never has to
-    be loaded into memory. `since` is an optional ISO timestamp lower bound.
+    be loaded into memory. `since` and `until` are optional ISO bounds.
     """
     q = ("SELECT server_key, COUNT(*) snaps, "
          "MAX(players) peak, AVG(players) mean FROM snapshots")
+    clauses = []
     params = []
     if since is not None:
-        q += " WHERE ts>=?"
+        clauses.append("ts>=?")
         params.append(since)
+    if until is not None:
+        clauses.append("ts<?")
+        params.append(until)
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
     q += " GROUP BY server_key"
     with _db() as c:
         return c.execute(q, params).fetchall()
@@ -387,7 +416,7 @@ def server_anomalies(key, limit=10):
             (key, limit)).fetchall()
 
 
-def anomaly_counts(since=None):
+def anomaly_counts(since=None, until=None):
     """Per-server anomaly tallies, keyed by server_key.
 
     Returns {server_key: {"total": n, "alerts": n, "bot_spikes": n}}.
@@ -397,10 +426,13 @@ def anomaly_counts(since=None):
          "SUM(CASE WHEN severity='alert' THEN 1 ELSE 0 END) alerts, "
          "SUM(CASE WHEN type='bot_spike' THEN 1 ELSE 0 END) bot_spikes "
          "FROM anomalies")
-    params = []
+    clauses, params = [], []
     if since is not None:
-        q += " WHERE ts>=?"
-        params.append(since)
+        clauses.append("ts>=?"); params.append(since)
+    if until is not None:
+        clauses.append("ts<?"); params.append(until)
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
     q += " GROUP BY server_key"
     with _db() as c:
         return {r["server_key"]: {"total": r["total"],
@@ -410,7 +442,7 @@ def anomaly_counts(since=None):
 
 
 def query_anomalies(server_key=None, type_=None, severity=None,
-                    since=None, limit=500):
+                    since=None, until=None, limit=500):
     """Flexible anomaly search for the web dashboard, newest-first."""
     q = "SELECT * FROM anomalies WHERE 1=1"
     params = []
@@ -426,25 +458,31 @@ def query_anomalies(server_key=None, type_=None, severity=None,
     if since is not None:
         q += " AND ts>=?"
         params.append(since)
+    if until is not None:
+        q += " AND ts<?"
+        params.append(until)
     q += " ORDER BY id DESC LIMIT ?"
     params.append(limit)
     with _db() as c:
         return c.execute(q, params).fetchall()
 
 
-def anomaly_type_counts(since=None):
+def anomaly_type_counts(since=None, until=None):
     """How many anomalies of each type exist, as {type: count}."""
     q = "SELECT type, COUNT(*) n FROM anomalies"
-    params = []
+    clauses, params = [], []
     if since is not None:
-        q += " WHERE ts>=?"
-        params.append(since)
+        clauses.append("ts>=?"); params.append(since)
+    if until is not None:
+        clauses.append("ts<?"); params.append(until)
+    if clauses:
+        q += " WHERE " + " AND ".join(clauses)
     q += " GROUP BY type ORDER BY n DESC"
     with _db() as c:
         return {r["type"]: r["n"] for r in c.execute(q, params).fetchall()}
 
 
-def bot_attempts_by_master(since=None, recent_limit=5):
+def bot_attempts_by_master(since=None, until=None, recent_limit=5):
     """Suspected bot fills tallied per master server.
 
     Joins anomalies of type `bot_spike` to their server's `source` so the
@@ -462,6 +500,9 @@ def bot_attempts_by_master(since=None, recent_limit=5):
     if since is not None:
         where += " AND a.ts>=?"
         params.append(since)
+    if until is not None:
+        where += " AND a.ts<?"
+        params.append(until)
     with _db() as c:
         rows = c.execute(
             "SELECT COALESCE(sv.source, '(unknown)') AS source, "
@@ -496,7 +537,7 @@ def bot_attempts_by_master(since=None, recent_limit=5):
         return out
 
 
-def integrity_counts(since=None):
+def integrity_counts(since=None, until=None):
     """Per-server count of HB-integrity anomalies, keyed by server_key."""
     q = ("SELECT server_key, COUNT(*) n FROM anomalies "
          "WHERE type IN ('hb_drop','hb_jump','hb_reset')")
@@ -504,6 +545,9 @@ def integrity_counts(since=None):
     if since is not None:
         q += " AND ts>=?"
         params.append(since)
+    if until is not None:
+        q += " AND ts<?"
+        params.append(until)
     q += " GROUP BY server_key"
     with _db() as c:
         return {r["server_key"]: r["n"]

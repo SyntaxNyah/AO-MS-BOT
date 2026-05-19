@@ -359,17 +359,30 @@ a full dashboard with a tab for everything the bot tracks:
 - **Records** &mdash; all-time milestones: highest player count, busiest day,
   biggest server, most data collected and more
 - **Dead Servers** &mdash; servers absent long enough to be considered shut down
+- **Botted** &mdash; per-master scoreboard of suspected bot-fill attempts
+  with the currently-spiking count and the latest offenders (see
+  [Bot-pattern detection](#bot-pattern-detection))
 - **Master Server** &mdash; about our open-source master server and how to
   list your own AO server on it, with links to the master server and WebAO
   source code
 
-Every chart has hover tooltips, every period can be filtered to
-day/week/month/year/all, and clicking any server anywhere opens a detail
-view with an uptime timeline (online/offline strip with outages), player
-history, HB-counter history, daily breakdown and anomalies. Most tabs have
-CSV/JSON export buttons, and server and compare
-views have shareable links. The dashboard is strictly read-only &mdash; it
-never polls or posts anything.
+Every chart has hover tooltips, and **every tab can be filtered by day,
+week, month, year, all-time, or a specific UTC calendar day**. The named
+ranges (Day / Week / Month / Year / All time) are the pill buttons at the
+top of each tab; next to them is a date picker &mdash; pick any date and
+every chart, table, count, anomaly browser and export on the page rescopes
+to *just that UTC day*. Hit **Clear** next to the date picker to drop back
+to all-time. The selection sticks as you switch between tabs.
+
+Clicking any server anywhere opens a detail view with the server's
+**published room description** (when it publishes one on the master list),
+the WebAO join link, an uptime timeline (online/offline strip with
+outages), player history, HB-counter history, daily breakdown and
+anomalies. The description is also visible in the dashboard and Servers
+list as a clipped sub-line under each name (full text on hover). Most tabs
+have CSV/JSON export buttons, and server and compare views have shareable
+links. The dashboard is strictly read-only &mdash; it never polls or posts
+anything.
 
 It refreshes itself every 60 seconds. If you expose it to the internet, put it
 behind a reverse proxy (nginx, Caddy) for HTTPS, or keep `WEBSITE_HOST` on

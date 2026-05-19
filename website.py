@@ -11,6 +11,7 @@ import csv
 import io
 import logging
 import os
+import re
 from datetime import datetime, timedelta, timezone
 
 from aiohttp import web
@@ -41,12 +42,44 @@ _TIERS = [
 ]
 
 
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 def _since(period):
-    """Turn a period name into an ISO lower bound, or None for all history."""
+    """Lower ISO bound (>=) for a period name, or None for all history.
+
+    A `period` matching `YYYY-MM-DD` selects a specific UTC calendar day:
+    the returned ISO timestamp is that day's 00:00:00+00:00, and `_until`
+    returns the next day's 00:00:00+00:00 -- pair them to scope a query to
+    exactly one day.
+    """
+    if period and _DATE_RE.match(period):
+        try:
+            day = datetime.strptime(period, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            return None
+        return day.isoformat()
     delta = _PERIODS.get(period)
     if delta is None:
         return None
     return (datetime.now(timezone.utc) - delta).isoformat()
+
+
+def _until(period):
+    """Upper ISO bound (<) for a period name, or None when open-ended.
+
+    Only date-mode periods (`YYYY-MM-DD`) have an upper bound -- every
+    other period extends up to "now" and therefore returns None.
+    """
+    if period and _DATE_RE.match(period):
+        try:
+            day = datetime.strptime(period, "%Y-%m-%d").replace(
+                tzinfo=timezone.utc)
+        except ValueError:
+            return None
+        return (day + timedelta(days=1)).isoformat()
+    return None
 
 
 def _downsample(rows, limit=600):
@@ -104,24 +137,26 @@ async def api_overview(request):
     """Headline page: stats, server list, anomaly feed, player trend."""
     period = request.query.get("period", "all")
     since = _since(period)
+    until = _until(period)
 
     stats = await asyncio.to_thread(db.stats)
     snaps = await asyncio.to_thread(db.last_poll_servers)
     servers = await asyncio.to_thread(db.all_servers)
     anomalies = await asyncio.to_thread(db.recent_anomalies, 60, False)
-    polls = await asyncio.to_thread(db.poll_history, since)
+    polls = await asyncio.to_thread(db.poll_history, since, until)
 
     status = {s["server_key"]: s["status"] for s in servers}
     srv_by = {s["server_key"]: s for s in servers}
-    def _source(key):
+    def _srv_field(key, field):
         row = srv_by.get(key)
-        return row["source"] if row is not None else None
+        return row[field] if row is not None else None
 
     server_list = sorted(
         ({"key": s["server_key"], "name": s["name"],
           "players": s["players"], "hb": s["hbcounter"],
           "status": status.get(s["server_key"], "online"),
-          "source": _source(s["server_key"]),
+          "source": _srv_field(s["server_key"], "source"),
+          "description": _srv_field(s["server_key"], "description") or "",
           "webao": _webao(srv_by.get(s["server_key"]), s["name"])}
          for s in snaps),
         key=lambda s: s["players"], reverse=True)
@@ -145,11 +180,12 @@ async def api_servers(request):
     """Every server ever tracked, with full aggregate stats."""
     period = request.query.get("period", "all")
     since = _since(period)
+    until = _until(period)
 
     servers = await asyncio.to_thread(db.all_servers)
-    stat_rows = await asyncio.to_thread(db.server_stats, since)
-    counts = await asyncio.to_thread(db.anomaly_counts, since)
-    polls = await asyncio.to_thread(db.poll_history, since)
+    stat_rows = await asyncio.to_thread(db.server_stats, since, until)
+    counts = await asyncio.to_thread(db.anomaly_counts, since, until)
+    polls = await asyncio.to_thread(db.poll_history, since, until)
     last_snaps = await asyncio.to_thread(db.last_poll_servers)
 
     poll_count = len(polls)
@@ -166,6 +202,7 @@ async def api_servers(request):
         out.append({
             "key": k, "name": s["name"], "status": s["status"],
             "source": s["source"],
+            "description": s["description"] or "",
             "first_seen": s["first_seen"], "last_seen": s["last_seen"],
             "players": ls["players"] if ls else None,
             "hb": ls["hbcounter"] if ls else None,
@@ -187,15 +224,16 @@ async def api_server(request):
     key = request.query.get("key", "")
     period = request.query.get("period", "all")
     since = _since(period)
+    until = _until(period)
 
     srv = await asyncio.to_thread(db.get_server, key)
     if srv is None:
         return web.json_response({"error": "Unknown server."}, status=404)
 
     snap = await asyncio.to_thread(db.latest_snapshot, key)
-    hist = await asyncio.to_thread(db.server_history, key, None, since)
+    hist = await asyncio.to_thread(db.server_history, key, None, since, until)
     anoms = await asyncio.to_thread(db.server_anomalies, key, 100)
-    polls = await asyncio.to_thread(db.poll_history, since)
+    polls = await asyncio.to_thread(db.poll_history, since, until)
 
     # Uptime timeline: at every poll the server was online if it produced a
     # snapshot with that exact timestamp; collapse the run into segments.
@@ -235,7 +273,8 @@ async def api_players(request):
     """Global player count: continuous trend and per-day peak/low."""
     period = request.query.get("period", "all")
     since = _since(period)
-    polls = await asyncio.to_thread(db.poll_history, since)
+    until = _until(period)
+    polls = await asyncio.to_thread(db.poll_history, since, until)
     valid = [r for r in polls if r["player_count"] is not None]
 
     trend = [{"t": r["ts"], "p": r["player_count"] or 0,
@@ -244,7 +283,7 @@ async def api_players(request):
 
     # Per-master breakdown: one trend per master server, kept separate so the
     # combined line never blurs which master contributed what.
-    src_rows = await asyncio.to_thread(db.poll_source_history, since)
+    src_rows = await asyncio.to_thread(db.poll_source_history, since, until)
     grouped = {}
     for r in src_rows:
         grouped.setdefault(r["source"], []).append(r)
@@ -269,11 +308,12 @@ async def api_compare(request):
     """All-server comparison: reliability tiers and a player overlay."""
     period = request.query.get("period", "all")
     since = _since(period)
+    until = _until(period)
 
-    polls = await asyncio.to_thread(db.poll_history, since)
+    polls = await asyncio.to_thread(db.poll_history, since, until)
     poll_count = len(polls)
-    stat_rows = await asyncio.to_thread(db.server_stats, since)
-    counts = await asyncio.to_thread(db.anomaly_counts, since)
+    stat_rows = await asyncio.to_thread(db.server_stats, since, until)
+    counts = await asyncio.to_thread(db.anomaly_counts, since, until)
     names = {s["server_key"]: s["name"]
              for s in await asyncio.to_thread(db.all_servers)}
 
@@ -303,7 +343,7 @@ async def api_compare(request):
                      reverse=True)[:12]
     overlay = []
     for s in plotted:
-        hist = await asyncio.to_thread(db.server_history, s["key"], None, since)
+        hist = await asyncio.to_thread(db.server_history, s["key"], None, since, until)
         overlay.append({
             "name": s["name"], "key": s["key"],
             "points": [[r["ts"], r["players"]] for r in _downsample(hist, 400)],
@@ -324,14 +364,15 @@ async def api_hb(request):
     """Heartbeat-counter history for every server, tampering flagged."""
     period = request.query.get("period", "all")
     since = _since(period)
+    until = _until(period)
 
     servers = await asyncio.to_thread(db.all_servers)
-    integ = await asyncio.to_thread(db.integrity_counts, since)
+    integ = await asyncio.to_thread(db.integrity_counts, since, until)
 
     out = []
     for s in servers:
         k = s["server_key"]
-        hist = await asyncio.to_thread(db.server_history, k, None, since)
+        hist = await asyncio.to_thread(db.server_history, k, None, since, until)
         sampled = _downsample(hist, 200)
         latest = next((r["hbcounter"] for r in reversed(sampled)
                        if r["hbcounter"] is not None), None)
@@ -350,13 +391,14 @@ async def api_anomalies(request):
     """Filterable anomaly browser."""
     period = request.query.get("period", "all")
     since = _since(period)
+    until = _until(period)
     type_ = request.query.get("type") or None
     severity = request.query.get("severity") or None
     server_key = request.query.get("key") or None
 
     rows = await asyncio.to_thread(
-        db.query_anomalies, server_key, type_, severity, since, 600)
-    type_counts = await asyncio.to_thread(db.anomaly_type_counts, since)
+        db.query_anomalies, server_key, type_, severity, since, until, 600)
+    type_counts = await asyncio.to_thread(db.anomaly_type_counts, since, until)
 
     return web.json_response({
         "anomalies": [dict(a) for a in rows],
@@ -376,7 +418,8 @@ async def api_bots(request):
     """
     period = request.query.get("period", "all")
     since = _since(period)
-    rows = await asyncio.to_thread(db.bot_attempts_by_master, since)
+    until = _until(period)
+    rows = await asyncio.to_thread(db.bot_attempts_by_master, since, until)
     return web.json_response({
         "masters": rows,
         "period": period,
@@ -415,7 +458,8 @@ async def api_activity(request):
     """A 7x24 weekday/hour grid of average player counts -- busiest times."""
     period = request.query.get("period", "all")
     since = _since(period)
-    polls = await asyncio.to_thread(db.poll_history, since)
+    until = _until(period)
+    polls = await asyncio.to_thread(db.poll_history, since, until)
 
     grid = [[[0, 0] for _ in range(24)] for _ in range(7)]   # [sum, count]
     for r in polls:
@@ -496,6 +540,7 @@ async def api_series(request):
     """Player history for a hand-picked set of servers (custom compare)."""
     period = request.query.get("period", "all")
     since = _since(period)
+    until = _until(period)
     keys = [k for k in request.query.get("keys", "").split(",") if k][:20]
 
     out = []
@@ -503,7 +548,7 @@ async def api_series(request):
         srv = await asyncio.to_thread(db.get_server, k)
         if srv is None:
             continue
-        hist = await asyncio.to_thread(db.server_history, k, None, since)
+        hist = await asyncio.to_thread(db.server_history, k, None, since, until)
         out.append({
             "name": srv["name"], "key": k,
             "points": [[r["ts"], r["players"]]
@@ -518,19 +563,20 @@ async def api_export(request):
     fmt = request.query.get("format", "csv").lower()
     period = request.query.get("period", "all")
     since = _since(period)
+    until = _until(period)
     key = request.query.get("key") or None
 
     headers, rows = [], []
     if dataset == "players":
-        polls = await asyncio.to_thread(db.poll_history, since)
+        polls = await asyncio.to_thread(db.poll_history, since, until)
         headers = ["timestamp", "players", "servers"]
         rows = [[r["ts"], r["player_count"], r["server_count"]]
                 for r in polls]
     elif dataset == "servers":
         servers = await asyncio.to_thread(db.all_servers)
-        stat_rows = await asyncio.to_thread(db.server_stats, since)
-        counts = await asyncio.to_thread(db.anomaly_counts, since)
-        poll_count = len(await asyncio.to_thread(db.poll_history, since))
+        stat_rows = await asyncio.to_thread(db.server_stats, since, until)
+        counts = await asyncio.to_thread(db.anomaly_counts, since, until)
+        poll_count = len(await asyncio.to_thread(db.poll_history, since, until))
         stat_by = {r["server_key"]: r for r in stat_rows}
         headers = ["server_key", "name", "status", "first_seen", "last_seen",
                    "peak", "mean", "snapshots", "uptime_pct", "anomalies",
@@ -550,7 +596,7 @@ async def api_export(request):
         type_ = request.query.get("type") or None
         severity = request.query.get("severity") or None
         a = await asyncio.to_thread(db.query_anomalies, key, type_,
-                                    severity, since, 1_000_000)
+                                    severity, since, until, 1_000_000)
         headers = ["timestamp", "server_key", "name", "type", "severity",
                    "detail"]
         rows = [[r["ts"], r["server_key"], r["name"], r["type"],
@@ -558,7 +604,7 @@ async def api_export(request):
     elif dataset == "server":
         if not key:
             return web.json_response({"error": "key required"}, status=400)
-        hist = await asyncio.to_thread(db.server_history, key, None, since)
+        hist = await asyncio.to_thread(db.server_history, key, None, since, until)
         headers = ["timestamp", "name", "players", "hbcounter"]
         rows = [[r["ts"], r["name"], r["players"], r["hbcounter"]]
                 for r in hist]

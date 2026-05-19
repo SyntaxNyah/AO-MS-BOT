@@ -156,7 +156,8 @@ async def run_poll():
 
         if existing is None:
             db.upsert_server(key, s["ip"], s["port"], s["name"], now_iso,
-                             s["ws_port"], s["wss_port"], s["source"])
+                             s["ws_port"], s["wss_port"], s["source"],
+                             description=s["description"])
             anomalies.append(_mk(now_iso, key, s["name"], "new_server", "info",
                                  f"New server appeared on the {master} "
                                  "master list.", master=master))
@@ -170,7 +171,8 @@ async def run_poll():
                                      f"Renamed: '{existing['name']}' -> "
                                      f"'{s['name']}'.", master=master))
             db.touch_server(key, s["name"], now_iso,
-                            s["ws_port"], s["wss_port"], s["source"])
+                            s["ws_port"], s["wss_port"], s["source"],
+                            description=s["description"])
 
         if prev_snap is not None and s["hbcounter"] is not None:
             gap = (now - datetime.fromisoformat(prev_snap["ts"])).total_seconds() / 60.0
