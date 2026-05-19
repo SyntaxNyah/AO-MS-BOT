@@ -1239,7 +1239,7 @@ async function renderMS(view){
   view.appendChild(c);
 
   // ---- How ranking works section ----
-  const rc=card("How server ranking works");
+  const rc=card("How the Umineko Online master server ranks servers");
 
   function infoBlock(html){
     const d=el("div");
@@ -1250,7 +1250,11 @@ async function renderMS(view){
 
   rc.appendChild(infoBlock(
     "<b style='color:var(--txt)'>Summary</b><br>"+
-    "When you (or any game client) ask the master server for the server list, "+
+    "This is our own custom ranking system built into the "+
+    "<b style='color:var(--txt)'>Nyan-AO-Master-Server</b> — the open-source master server "+
+    "we run at <code style='color:var(--accent)'>servers.umineko.online</code>. "+
+    "The official Attorney Online master server does not use this system. "+
+    "When you (or any game client) ask our master server for the server list, "+
     "servers are returned in order from best to worst based on a <b style='color:var(--txt)'>score</b>. "+
     "The highest-scoring server appears first. The score is calculated as:<br><br>"+
     "<code style='background:var(--panel2);border:1px solid var(--line);border-radius:6px;"+
