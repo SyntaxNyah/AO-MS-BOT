@@ -573,9 +573,22 @@ async def index(request):
 # Server lifecycle
 # --------------------------------------------------------------------------
 
+@web.middleware
+async def no_store(request, handler):
+    """Stop Cloudflare and browsers from serving a stale dashboard or API.
+
+    The dashboard auto-refreshes, so every response must reflect live data;
+    a cached /api/overview would freeze the HB counters until the cache
+    expired.
+    """
+    response = await handler(request)
+    response.headers["Cache-Control"] = "no-store, must-revalidate"
+    return response
+
+
 async def start():
     """Start the dashboard inside the running event loop. Returns the runner."""
-    app = web.Application()
+    app = web.Application(middlewares=[no_store])
     app.router.add_get("/", index)
     app.router.add_get("/api/meta", api_meta)
     app.router.add_get("/api/overview", api_overview)
