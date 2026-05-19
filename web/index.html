@@ -234,7 +234,7 @@ function fmtAxisTime(ms,span){ const d=new Date(ms);
   if(span < 2*864e5) return String(d.getHours()).padStart(2,"0")+":"+
                             String(d.getMinutes()).padStart(2,"0");
   return (d.getMonth()+1)+"/"+d.getDate(); }
-async function getJSON(url){ const r=await fetch(url);
+async function getJSON(url){ const r=await fetch(url,{cache:"no-store"});
   if(!r.ok && r.status!==404) throw new Error(r.status); return r.json(); }
 function ms(t){ return new Date(t).getTime(); }
 
