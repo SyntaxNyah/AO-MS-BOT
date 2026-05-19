@@ -1237,6 +1237,101 @@ async function renderMS(view){
   c.appendChild(cta);
 
   view.appendChild(c);
+
+  // ---- How ranking works section ----
+  const rc=card("How server ranking works");
+
+  function infoBlock(html){
+    const d=el("div");
+    d.style.cssText="color:var(--dim);font-size:13px;line-height:1.7;margin-bottom:18px";
+    d.innerHTML=html;
+    return d;
+  }
+
+  rc.appendChild(infoBlock(
+    "<b style='color:var(--txt)'>Summary</b><br>"+
+    "When you (or any game client) ask the master server for the server list, "+
+    "servers are returned in order from best to worst based on a <b style='color:var(--txt)'>score</b>. "+
+    "The highest-scoring server appears first. The score is calculated as:<br><br>"+
+    "<code style='background:var(--panel2);border:1px solid var(--line);border-radius:6px;"+
+    "padding:4px 10px;font-size:13px;color:var(--accent)'>"+
+    "score = players &times; 10081 + hbcounter"+
+    "</code><br><br>"+
+    "Every server object in the API response includes the <code style='color:var(--accent)'>score</code> "+
+    "field so clients can see exactly how the list was ordered."
+  ));
+
+  rc.appendChild(infoBlock(
+    "<b style='color:var(--txt)'>Players are the dominant factor</b><br>"+
+    "One extra player always beats any possible heartbeat difference. "+
+    "A brand-new server with 6 players will always rank above a perfectly "+
+    "stable server with 5 players, no matter how long the 5-player server has been online. "+
+    "The multiplier 10081 is chosen to guarantee this — it is hbcounter_cap&nbsp;+&nbsp;1, "+
+    "so even the maximum possible hbcounter (10080) cannot overcome a one-player gap."
+  ));
+
+  rc.appendChild(infoBlock(
+    "<b style='color:var(--txt)'>Heartbeat counter breaks ties</b><br>"+
+    "When two servers have the same number of players, the one with the "+
+    "higher hbcounter ranks first. The hbcounter goes up by 1 each minute the server "+
+    "stays online and sends a heartbeat, so a higher counter means the server has "+
+    "been continuously online for longer — it is a stability signal."
+  ));
+
+  // Example ranking table
+  const exh=el("div","charth","Example ranking");
+  rc.appendChild(exh);
+
+  const exTbl=document.createElement("table");
+  exTbl.style.marginBottom="14px";
+  exTbl.innerHTML=
+    "<thead><tr>"+
+    "<th style='color:var(--dim);font-size:11px;text-transform:uppercase;padding:7px 8px;border-bottom:1px solid var(--line)'>Rank</th>"+
+    "<th style='color:var(--dim);font-size:11px;text-transform:uppercase;padding:7px 8px;border-bottom:1px solid var(--line)'>Server</th>"+
+    "<th style='color:var(--dim);font-size:11px;text-transform:uppercase;padding:7px 8px;border-bottom:1px solid var(--line)'>Players</th>"+
+    "<th style='color:var(--dim);font-size:11px;text-transform:uppercase;padding:7px 8px;border-bottom:1px solid var(--line)'>HBCounter</th>"+
+    "<th style='color:var(--dim);font-size:11px;text-transform:uppercase;padding:7px 8px;border-bottom:1px solid var(--line)'>Score</th>"+
+    "<th style='color:var(--dim);font-size:11px;text-transform:uppercase;padding:7px 8px;border-bottom:1px solid var(--line)'>Why</th>"+
+    "</tr></thead>"+
+    "<tbody>"+
+    "<tr><td style='padding:7px 8px;border-bottom:1px solid #20262f;font-weight:600;color:var(--green)'>1</td>"+
+    "<td style='padding:7px 8px;border-bottom:1px solid #20262f'>A</td>"+
+    "<td style='padding:7px 8px;border-bottom:1px solid #20262f;font-variant-numeric:tabular-nums;font-weight:600'>6</td>"+
+    "<td style='padding:7px 8px;border-bottom:1px solid #20262f;font-variant-numeric:tabular-nums;font-weight:600'>0</td>"+
+    "<td style='padding:7px 8px;border-bottom:1px solid #20262f;font-variant-numeric:tabular-nums;font-weight:600;color:var(--accent)'>60 486</td>"+
+    "<td style='padding:7px 8px;border-bottom:1px solid #20262f;color:var(--dim);font-size:12px'>One extra player beats any hbcounter difference</td></tr>"+
+    "<tr><td style='padding:7px 8px;border-bottom:1px solid #20262f;font-weight:600;color:var(--blue)'>2</td>"+
+    "<td style='padding:7px 8px;border-bottom:1px solid #20262f'>B</td>"+
+    "<td style='padding:7px 8px;border-bottom:1px solid #20262f;font-variant-numeric:tabular-nums;font-weight:600'>5</td>"+
+    "<td style='padding:7px 8px;border-bottom:1px solid #20262f;font-variant-numeric:tabular-nums;font-weight:600'>10 080</td>"+
+    "<td style='padding:7px 8px;border-bottom:1px solid #20262f;font-variant-numeric:tabular-nums;font-weight:600;color:var(--accent)'>60 485</td>"+
+    "<td style='padding:7px 8px;border-bottom:1px solid #20262f;color:var(--dim);font-size:12px'>7 days online (max stability) beats C&rsquo;s 2 days</td></tr>"+
+    "<tr><td style='padding:7px 8px;font-weight:600;color:var(--dim)'>3</td>"+
+    "<td style='padding:7px 8px'>C</td>"+
+    "<td style='padding:7px 8px;font-variant-numeric:tabular-nums;font-weight:600'>5</td>"+
+    "<td style='padding:7px 8px;font-variant-numeric:tabular-nums;font-weight:600'>2 880</td>"+
+    "<td style='padding:7px 8px;font-variant-numeric:tabular-nums;font-weight:600;color:var(--accent)'>53 285</td>"+
+    "<td style='padding:7px 8px;color:var(--dim);font-size:12px'>Same players as B, but shorter uptime</td></tr>"+
+    "</tbody>";
+  rc.appendChild(exTbl);
+
+  rc.appendChild(infoBlock(
+    "<b style='color:var(--txt)'>HBCounter &amp; rollover</b><br>"+
+    "Each heartbeat (once per minute) increments a server&rsquo;s hbcounter by 1. "+
+    "The counter is capped at <b style='color:var(--txt)'>10 080</b>, which is exactly "+
+    "7&nbsp;days worth of heartbeats (1&nbsp;per&nbsp;min &times; 60&nbsp;&times;&nbsp;24&nbsp;&times;&nbsp;7). "+
+    "When a server hits the cap it does <em>not</em> stay there forever — the counter "+
+    "rolls back down to <b style='color:var(--txt)'>9 000</b> and starts climbing again. "+
+    "This prevents an old server from building an insurmountable score lead just from age. "+
+    "A server that has been online for months and a server that came back online last week "+
+    "will always be within the same scoring band, so player count remains the deciding factor.<br><br>"+
+    "Both the cap and the rollover target are configurable via the "+
+    "<code style='color:var(--accent)'>MS_HBCOUNTER_CAP</code> and "+
+    "<code style='color:var(--accent)'>MS_HBCOUNTER_ROLLOVER_DROP</code> "+
+    "environment variables on the master server."
+  ));
+
+  view.appendChild(rc);
 }
 
 // ---- router --------------------------------------------------------------
