@@ -20,12 +20,13 @@ CREATE TABLE IF NOT EXISTS servers (
     source     TEXT
 );
 CREATE TABLE IF NOT EXISTS snapshots (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    server_key TEXT,
-    ts         TEXT,
-    name       TEXT,
-    players    INTEGER,
-    hbcounter  INTEGER
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    server_key  TEXT,
+    ts          TEXT,
+    name        TEXT,
+    players     INTEGER,
+    players_raw INTEGER,
+    hbcounter   INTEGER
 );
 CREATE INDEX IF NOT EXISTS idx_snap_key_ts ON snapshots(server_key, ts);
 CREATE INDEX IF NOT EXISTS idx_snap_ts ON snapshots(ts);
@@ -89,12 +90,28 @@ def _migrate(c):
     if "bot_state" not in scols:
         c.execute(
             "ALTER TABLE servers ADD COLUMN bot_state TEXT DEFAULT 'normal'")
+    if "bot_baseline" not in scols:
+        # The pre-spike player count, captured the moment a bot spike begins.
+        # While bot_state='spike' this value is substituted into snapshots and
+        # poll totals so the inflated readings never contaminate the data.
+        c.execute("ALTER TABLE servers ADD COLUMN bot_baseline INTEGER")
     if "ws_port" not in scols:
         c.execute("ALTER TABLE servers ADD COLUMN ws_port INTEGER")
     if "wss_port" not in scols:
         c.execute("ALTER TABLE servers ADD COLUMN wss_port INTEGER")
     if "source" not in scols:
         c.execute("ALTER TABLE servers ADD COLUMN source TEXT")
+
+    sncols = {r["name"] for r in c.execute("PRAGMA table_info(snapshots)")}
+    if "players_raw" not in sncols:
+        # Forensic copy of the raw master-server reading. `players` may hold a
+        # substituted baseline while a spike is in progress; `players_raw`
+        # always holds what the master actually reported, so the unfiltered
+        # series is recoverable for review without re-contaminating graphs.
+        c.execute("ALTER TABLE snapshots ADD COLUMN players_raw INTEGER")
+        c.execute(
+            "UPDATE snapshots SET players_raw = players "
+            "WHERE players_raw IS NULL")
 
     # Per-master poll breakdown is newer than the polls table. If it is empty
     # but polls exist, backfill it once: attribute each past poll's snapshots
@@ -247,10 +264,16 @@ def dead_servers(cutoff_iso):
             (cutoff_iso,)).fetchall()
 
 
-def set_bot_state(key, state):
+def set_bot_state(key, state, baseline=None):
+    """Update a server's bot-pattern state and its captured pre-spike baseline.
+
+    `baseline` is the player count substituted into snapshots while in
+    `spike` state; pass None to clear it (typically on the spike-end edge).
+    """
     with _db() as c:
-        c.execute("UPDATE servers SET bot_state=? WHERE server_key=?",
-                  (state, key))
+        c.execute(
+            "UPDATE servers SET bot_state=?, bot_baseline=? "
+            "WHERE server_key=?", (state, baseline, key))
 
 
 def find_servers(query):
@@ -263,11 +286,22 @@ def find_servers(query):
 
 # --- snapshots ---
 
-def add_snapshot(key, ts, name, players, hb):
+def add_snapshot(key, ts, name, players, hb, players_raw=None):
+    """Store one server snapshot.
+
+    `players` is the value safe to graph -- a substituted baseline during a
+    bot spike, the master-reported count otherwise. `players_raw` is the
+    unfiltered master-reported count, kept for forensic review and defaults
+    to `players` when no separate raw value is supplied.
+    """
+    if players_raw is None:
+        players_raw = players
     with _db() as c:
         c.execute(
-            "INSERT INTO snapshots (server_key, ts, name, players, hbcounter) "
-            "VALUES (?,?,?,?,?)", (key, ts, name, players, hb))
+            "INSERT INTO snapshots "
+            "(server_key, ts, name, players, players_raw, hbcounter) "
+            "VALUES (?,?,?,?,?,?)",
+            (key, ts, name, players, players_raw, hb))
 
 
 def latest_snapshot(key):
@@ -408,6 +442,58 @@ def anomaly_type_counts(since=None):
     q += " GROUP BY type ORDER BY n DESC"
     with _db() as c:
         return {r["type"]: r["n"] for r in c.execute(q, params).fetchall()}
+
+
+def bot_attempts_by_master(since=None, recent_limit=5):
+    """Suspected bot fills tallied per master server.
+
+    Joins anomalies of type `bot_spike` to their server's `source` so the
+    dashboard can show how many bot-fill attempts each master has seen, how
+    many distinct servers were affected, the most recent attempt's timestamp,
+    and a short list of the latest offenders. Returns a list of dicts,
+    busiest master first:
+        {"source": url, "attempts": n, "servers": n, "last_ts": iso,
+         "currently_spiking": n, "recent": [{server_key, name, ts}, ...]}
+    Servers that were renamed or have disappeared still appear in the count
+    because the join keeps the original anomaly rows.
+    """
+    where = "a.type='bot_spike'"
+    params = []
+    if since is not None:
+        where += " AND a.ts>=?"
+        params.append(since)
+    with _db() as c:
+        rows = c.execute(
+            "SELECT COALESCE(sv.source, '(unknown)') AS source, "
+            "       COUNT(*) AS attempts, "
+            "       COUNT(DISTINCT a.server_key) AS servers, "
+            "       MAX(a.ts) AS last_ts "
+            "FROM anomalies a "
+            "LEFT JOIN servers sv ON sv.server_key = a.server_key "
+            f"WHERE {where} "
+            "GROUP BY source ORDER BY attempts DESC", params).fetchall()
+        spiking = {r["source"] or "(unknown)": r["n"] for r in c.execute(
+            "SELECT COALESCE(source,'(unknown)') AS source, COUNT(*) n "
+            "FROM servers WHERE bot_state='spike' "
+            "GROUP BY source").fetchall()}
+        out = []
+        for r in rows:
+            recents = c.execute(
+                "SELECT a.server_key, a.name, a.ts "
+                "FROM anomalies a "
+                "LEFT JOIN servers sv ON sv.server_key = a.server_key "
+                f"WHERE {where} AND COALESCE(sv.source,'(unknown)')=? "
+                "ORDER BY a.id DESC LIMIT ?",
+                params + [r["source"], recent_limit]).fetchall()
+            out.append({
+                "source": r["source"],
+                "attempts": r["attempts"],
+                "servers": r["servers"],
+                "last_ts": r["last_ts"],
+                "currently_spiking": spiking.get(r["source"], 0),
+                "recent": [dict(x) for x in recents],
+            })
+        return out
 
 
 def integrity_counts(since=None):

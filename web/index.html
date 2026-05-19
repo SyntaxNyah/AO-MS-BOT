@@ -186,8 +186,8 @@
 const TABS = [
   ["dashboard","Dashboard"], ["servers","Servers"], ["players","Players"],
   ["activity","Activity"], ["compare","Compare"], ["hb","HB Counter"],
-  ["anomalies","Anomalies"], ["records","Records"], ["dead","Dead Servers"],
-  ["ms","Master Server"], ["credits","Credits"],
+  ["anomalies","Anomalies"], ["bots","Botted"], ["records","Records"],
+  ["dead","Dead Servers"], ["ms","Master Server"], ["credits","Credits"],
 ];
 const REPO_URL="https://github.com/SyntaxNyah/AO-MS-BOT";
 const MS_REPO_URL="https://github.com/SyntaxNyah/Nyan-AO-Master-Server";
@@ -976,6 +976,81 @@ async function renderActivity(view){
   view.appendChild(c);
 }
 
+// ---- tab: bots -----------------------------------------------------------
+// Per-master scoreboard of bot-fill attempts. Every entry the bot detector
+// flagged as a `bot_spike` lives here, broken down by which master server
+// the affected server was listed on. The bot keeps the inflated readings
+// out of the stored data (they are substituted for the pre-spike baseline)
+// so this page is the single place those attempts are still visible.
+async function renderBots(view){
+  const d=await getJSON("/api/bots?period="+state.period);
+  view.appendChild(periodBar());
+
+  const intro=card("Botted attempts per master server");
+  const note=el("p",null,
+    "Every server bursts in the same way: a near-empty room jumps to "+
+    "dozens of players in one or two polls, holds perfectly flat, and "+
+    "drops again. The bot recognises that shape, substitutes the "+
+    "pre-spike baseline into the stored data so graphs stay clean, and "+
+    "logs the attempt here. Popular servers and busy-network nights get "+
+    "lenience — obvious tells (plateau, instant max-out, implausible "+
+    "counts, copycat counts mirrored across peers) still fire.");
+  note.style.color="var(--dim)";
+  note.style.fontSize="13px";
+  note.style.marginBottom="14px";
+  intro.appendChild(note);
+
+  const masters=d.masters||[];
+  if(!masters.length){
+    intro.appendChild(el("div","empty",
+      "No bot-fill attempts in this period — the master servers are clean."));
+    view.appendChild(intro);
+    return;
+  }
+
+  const grid=el("div","recgrid");
+  for(const m of masters){
+    const label=masterLabel(m.source);
+    const tile=el("div","rec");
+    tile.appendChild(el("div","rl",label));
+    const v=el("div","rv",fmtNum(m.attempts));
+    v.style.color="var(--red)";
+    v.style.fontSize="22px";
+    tile.appendChild(v);
+    const sub=m.servers+" server"+(m.servers===1?"":"s")+" affected · "+
+      (m.currently_spiking||0)+" spiking now";
+    tile.appendChild(el("div","rs",sub));
+    if(m.last_ts) tile.appendChild(el("div","rs","last: "+fmtTs(m.last_ts)));
+    grid.appendChild(tile);
+  }
+  intro.appendChild(grid);
+  view.appendChild(intro);
+
+  for(const m of masters){
+    const label=masterLabel(m.source);
+    const c=card("Recent bot-fill attempts — "+label);
+    if(!m.recent||!m.recent.length){
+      c.appendChild(el("div","empty","No recent attempts logged."));
+      view.appendChild(c);
+      continue;
+    }
+    const list=el("div");
+    for(const r of m.recent){
+      const row=el("div","rec");
+      row.style.cursor="pointer";
+      row.onclick=()=>openServer(r.server_key);
+      row.appendChild(el("div","rl",fmtTs(r.ts)));
+      const nm=el("div","rv",r.name||r.server_key);
+      nm.style.fontSize="14px";
+      row.appendChild(nm);
+      row.appendChild(el("div","rs",r.server_key));
+      list.appendChild(row);
+    }
+    c.appendChild(list);
+    view.appendChild(c);
+  }
+}
+
 // ---- tab: records --------------------------------------------------------
 async function renderRecords(view){
   const d=await getJSON("/api/records");
@@ -1360,8 +1435,8 @@ async function renderMS(view){
 // ---- router --------------------------------------------------------------
 const RENDERERS={dashboard:renderDashboard,servers:renderServers,
   players:renderPlayers,activity:renderActivity,compare:renderCompare,
-  hb:renderHB,anomalies:renderAnomalies,records:renderRecords,
-  dead:renderDead,ms:renderMS,credits:renderCredits};
+  hb:renderHB,anomalies:renderAnomalies,bots:renderBots,
+  records:renderRecords,dead:renderDead,ms:renderMS,credits:renderCredits};
 
 function buildNav(){
   const nav=document.getElementById("nav");

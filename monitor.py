@@ -126,6 +126,22 @@ async def run_poll():
     anomalies = []
     current_keys = set()
 
+    # Per-master peer table for this poll: lets the bot detector see what
+    # every *other* server on the same master is doing right now. Used to
+    # spot copycat counts (the same exact non-trivial value across several
+    # servers) and to recognise busy-network nights where a rising count is
+    # part of an event, not a one-off fill. Stored as (server_key, players)
+    # so each server's own count is easy to filter out when building peers.
+    peers_by_source = {}
+    for ps in servers:
+        peers_by_source.setdefault(ps["source"], []).append(
+            (server_key(ps), ps["players"]))
+
+    # All-time peak per server, fetched once so popular servers can be given
+    # lenience without an extra DB hit inside the loop.
+    server_peaks = {r["server_key"]: (r["peak"] or 0)
+                    for r in db.server_stats()}
+
     for s in servers:
         key = server_key(s)
         current_keys.add(key)
@@ -165,21 +181,37 @@ async def run_poll():
                 anomalies.append(_mk(now_iso, key, s["name"], *result,
                                      master=master))
 
-        # Player-count / bot-pattern check: a near-empty server filling up over
-        # a poll or two looks like an automated bot fill.
+        # Player-count / bot-pattern check: a near-empty server filling up
+        # over a poll or two looks like an automated bot fill. When a spike
+        # is detected the stored player count is held at the pre-spike
+        # baseline so the inflated readings cannot contaminate snapshots or
+        # the per-master / global poll totals -- the raw value is preserved
+        # in `players_raw` for forensic review.
+        stored_players = s["players"]
         if existing is not None:
             recent = [r["players"] for r in db.server_history(
                 key, limit=BOT_BASELINE_WINDOW + 4)]
             prev_state = existing["bot_state"] or "normal"
-            new_state, p_result = analyze_players(
-                recent, s["players"], prev_state)
-            if new_state != prev_state:
-                db.set_bot_state(key, new_state)
+            prev_baseline = existing["bot_baseline"]
+            # Peers = every other server on the same master this poll, so the
+            # detector can see copycat counts and busy-network state.
+            peers = [pcount for pkey, pcount
+                     in peers_by_source.get(s["source"], [])
+                     if pkey != key]
+            new_state, new_baseline, filtered, p_result = analyze_players(
+                recent, s["players"], prev_state, prev_baseline,
+                server_peak=server_peaks.get(key),
+                peer_counts=peers)
+            if new_state != prev_state or new_baseline != prev_baseline:
+                db.set_bot_state(key, new_state, new_baseline)
             if p_result:
                 anomalies.append(_mk(now_iso, key, s["name"], *p_result,
                                      master=master))
+            stored_players = filtered if filtered is not None else s["players"]
+        s["stored_players"] = stored_players
 
-        db.add_snapshot(key, now_iso, s["name"], s["players"], s["hbcounter"])
+        db.add_snapshot(key, now_iso, s["name"], stored_players,
+                        s["hbcounter"], players_raw=s["players"])
 
     # Servers still marked online but absent from this poll have disappeared.
     for row in db.online_servers():
@@ -191,13 +223,20 @@ async def run_poll():
                                  f"Server vanished from the {master} master "
                                  "list.", master=master))
 
-    total_players = sum(s["players"] for s in servers)
+    # Aggregate the *filtered* counts: a server in a bot spike contributes its
+    # captured pre-spike baseline so the inflated reading never lands in the
+    # global or per-master totals. Falls back to the raw value for servers
+    # the bot-pattern check did not run on (e.g. first-ever sighting).
+    def _stored(s):
+        return s.get("stored_players", s["players"])
+
+    total_players = sum(_stored(s) for s in servers)
     # Keep each master server's counts separate so the trend never mixes them.
     by_source = {}
     for s in servers:
         agg = by_source.setdefault(s["source"], {"servers": 0, "players": 0})
         agg["servers"] += 1
-        agg["players"] += s["players"]
+        agg["players"] += _stored(s)
     db.record_poll(now_iso, ok=1, server_count=len(servers),
                    player_count=total_players, by_source=by_source)
     for a in anomalies:

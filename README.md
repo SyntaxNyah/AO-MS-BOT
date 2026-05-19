@@ -78,15 +78,77 @@ High-severity integrity alerts (including bot bursts) ping `@here`.
 
 ### Bot-pattern detection
 
-A server that normally sits near-empty suddenly gaining **40&ndash;100 players
-over just a poll or two** looks like an automated bot fill rather than organic
-traffic. On every poll the bot measures each server's baseline (the median of
-its recent player counts) and flags a `bot_spike` when a server whose baseline
-is at or below **8 players** jumps to **40 or more**. A gradual, organic rise
-keeps the baseline high enough that it is *not* flagged &mdash; only sudden
-bursts are. When the burst subsides the bot logs a `bot_spike_end` so the data
-reflects both the start and the end of the event. These thresholds are tunable
-in `config.py` (`BOT_SPIKE_MIN`, `BOT_BASELINE_MAX`, `BOT_SPIKE_POLLS`).
+Bot fills look nothing like real player activity, and the bot exploits every
+one of those tells. The goal is two-fold:
+
+1. **Let servers grow organically without false flags.** A popular show
+   filling a room over several minutes is not a bot.
+2. **Catch the obvious bot shapes that organic traffic never produces** &mdash;
+   even on a server that is normally busy.
+
+Anything flagged as a `bot_spike` also has its **player count substituted out
+of the stored data** while the burst lasts (see "Data substitution" below),
+so the inflated readings never contaminate snapshots, totals or graphs. The
+raw master-reported value is preserved in `snapshots.players_raw` for review.
+
+#### What gets flagged
+
+| Shape | What the bot sees | Why organic traffic never does this |
+|-------|-------------------|--------------------------------------|
+| **Burst**       | A near-empty server (baseline &le; `BOT_BASELINE_MAX`, default 8) jumps to `BOT_SPIKE_MIN`+ players (default 40) over the last `BOT_SPIKE_POLLS` polls (default 2) | Real fills ramp up &mdash; people show up over minutes |
+| **Instant max-out** | The previous poll was &le; `BOT_INSTANT_MAX_BASELINE` (default 1) and this poll is already `BOT_SPIKE_MIN`+ | A single-poll step from nothing to a packed room is impossible organically |
+| **Plateau**     | The exact same non-trivial count (&ge; `BOT_PLATEAU_MIN`, default 20) for `BOT_PLATEAU_POLLS` polls in a row (default 8) | Real activity always wobbles by 1&ndash;2 every minute; spawned bot clients sit perfectly idle |
+| **Implausible** | A burst that crosses `BOT_IMPLAUSIBLE_MIN` (default 200) | Numbers like this do not appear organically on any AO server |
+| **Copycat**     | A burst whose exact player count is mirrored by `BOT_COPYCAT_MIN_PEERS`+ other servers on the same master *this poll* (default 2 peers, count &ge; 10) | Independent servers do not coincidentally land on the same player count |
+
+When the burst subsides the bot logs a `bot_spike_end` so the data reflects
+both edges of the event.
+
+#### What does **not** get flagged (lenience rules)
+
+- **Organic ramps.** If the previous poll was already at `BOT_RAMP_RATIO`
+  (default 0.5) of the current count or higher, the bot treats it as
+  gradual growth and skips the burst alert. Step shapes (instant max-out,
+  implausible, copycat) ignore this rule &mdash; those are never organic.
+- **Popular servers.** A server with an all-time peak at or above
+  `BOT_POPULAR_PEAK_MIN` (default 25) is "known-busy". Its burst threshold is
+  scaled to `peak * BOT_POPULAR_BURST_FACTOR` (default &times; 2), so a
+  regular show that fills the room every weekend never re-flags. Obvious
+  tells (plateau, instant max-out, implausible, copycat) still fire &mdash;
+  popularity does not excuse a 0&rarr;300 jump or 8 identical readings in a
+  row.
+- **Busy-network nights.** Every poll the bot also looks at every *other*
+  server on the same master. When the network's median peer count is at or
+  above `BOT_BUSY_NETWORK_MEDIAN` (default 15), one server rising along with
+  the rest is treated as part of an event, not a one-off fill. Step shapes
+  and the obvious tells still fire.
+
+#### Data substitution
+
+The bot detector does not just alert &mdash; it **keeps the bot readings
+out of the stored data**. The moment a server enters a spike, the bot
+captures its pre-spike baseline (the median of its recent polls) into
+`servers.bot_baseline`. While the spike lasts:
+
+- `snapshots.players` is written as that captured baseline, so graphs and
+  per-server history stay at the server's real player count
+- `polls.player_count` and `poll_sources.player_count` sum the substituted
+  values, so global and per-master player-count trends never carry the
+  inflated burst
+- `snapshots.players_raw` keeps the raw master-reported number for forensic
+  review, so the unfiltered series is recoverable without polluting the
+  graphs
+
+When the count falls back below `BOT_SPIKE_MIN` the spike state clears and
+substitution stops. The "Botted" tab on the dashboard surfaces every
+attempt per master &mdash; how many bot fills each master has seen, how
+many distinct servers were affected, how many are currently spiking and a
+list of the latest offenders.
+
+Every threshold above is tunable from the environment (e.g.
+`BOT_SPIKE_MIN`, `BOT_PLATEAU_POLLS`, `BOT_POPULAR_PEAK_MIN`,
+`BOT_BUSY_NETWORK_MEDIAN`); see the corresponding entries in `.env.example`
+for the full list.
 
 ### Graphs
 

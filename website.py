@@ -365,6 +365,25 @@ async def api_anomalies(request):
     })
 
 
+async def api_bots(request):
+    """Suspected bot-fill attempts grouped per master server.
+
+    Powers the dashboard "Botted" tab. Each master entry carries the total
+    `bot_spike` anomalies, how many distinct servers were affected, the most
+    recent attempt's timestamp, the count of servers *currently* held in a
+    spike (and therefore having their player counts substituted out of the
+    stored data), plus a short list of the latest offenders.
+    """
+    period = request.query.get("period", "all")
+    since = _since(period)
+    rows = await asyncio.to_thread(db.bot_attempts_by_master, since)
+    return web.json_response({
+        "masters": rows,
+        "period": period,
+        "ms_urls": config.MS_URLS,
+    })
+
+
 async def api_deadservers(request):
     """Servers absent from the master list long enough to be shut down."""
     now = datetime.now(timezone.utc)
@@ -598,6 +617,7 @@ async def start():
     app.router.add_get("/api/compare", api_compare)
     app.router.add_get("/api/hb", api_hb)
     app.router.add_get("/api/anomalies", api_anomalies)
+    app.router.add_get("/api/bots", api_bots)
     app.router.add_get("/api/deadservers", api_deadservers)
     app.router.add_get("/api/activity", api_activity)
     app.router.add_get("/api/records", api_records)
