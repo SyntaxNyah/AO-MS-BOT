@@ -117,7 +117,8 @@ async def poll_loop():
     await post_poll_summary(summary)
 
     for a in anomalies:
-        write_event(f"  [{a['severity'].upper()}] {a['type']} -- "
+        write_event(f"  [{a['severity'].upper()}] "
+                    f"[{a.get('master') or 'unknown master'}] {a['type']} -- "
                     f"{a['name']} -- {a['detail']}")
         await dispatch_alert(a)
 
@@ -186,6 +187,10 @@ async def dispatch_alert(a):
         title = "Suspected bot pattern"
     else:
         title = "Server event"
+    # Prefix the title with the master server so alerts from the vanilla and
+    # Umineko masters stay clearly separate even when they share a channel.
+    master = a.get("master")
+    title = f"[{master}] {title}" if master else title
     embed = discord.Embed(
         title=f"{title}: {a['type']}",
         description=a["detail"],
@@ -195,6 +200,8 @@ async def dispatch_alert(a):
     embed.add_field(name="Server", value=a["name"][:240], inline=False)
     embed.add_field(name="Address", value=f"`{a['server_key']}`", inline=True)
     embed.add_field(name="Severity", value=a["severity"].upper(), inline=True)
+    if master:
+        embed.add_field(name="Master server", value=master, inline=True)
 
     content = ("@here" if (important and a["severity"] == "alert")
                else None)
@@ -900,7 +907,8 @@ async def poll_cmd(interaction: discord.Interaction):
     await interaction.response.defer()
     summary, anomalies = await monitor.run_poll()
     for a in anomalies:
-        write_event(f"  [{a['severity'].upper()}] {a['type']} -- "
+        write_event(f"  [{a['severity'].upper()}] "
+                    f"[{a.get('master') or 'unknown master'}] {a['type']} -- "
                     f"{a['name']} -- {a['detail']}")
         await dispatch_alert(a)
     if summary["ok"]:
