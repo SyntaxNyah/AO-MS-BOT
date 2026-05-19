@@ -104,7 +104,8 @@ def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True, rules=None):
 
 
 def analyze_players(recent_players, cur_players, prev_state="normal",
-                    prev_baseline=None, server_peak=None, peer_counts=None):
+                    prev_baseline=None, server_peak=None, peer_counts=None,
+                    recent_hbcounters=None, cur_hbcounter=None):
     """Spot a bot-like player burst on a normally near-empty server.
 
     `recent_players` is the server's player counts from prior polls,
@@ -122,6 +123,14 @@ def analyze_players(recent_players, cur_players, prev_state="normal",
     servers report the same count) apart from a busy night (many servers up
     organically).
 
+    `recent_hbcounters` is the server's hbcounter readings from the same
+    prior polls as `recent_players` (oldest-first), and `cur_hbcounter` is
+    this poll's hbcounter. The plateau detector uses them to skip cached
+    re-reads -- the vanilla Attorney Online master only publishes each
+    server every few minutes, so the bot's per-minute polls re-read the
+    same snapshot several times in a row. A "plateau" is only meaningful
+    across *distinct* master updates, not across cache hits.
+
     Returns (new_state, new_baseline, filtered_players, anomaly).
       - `new_state`         next bot_state to persist
       - `new_baseline`      baseline to persist (None when not in a spike)
@@ -136,8 +145,12 @@ def analyze_players(recent_players, cur_players, prev_state="normal",
                    the whole network is busy)
       * instant -- single-poll jump from baseline <= BOT_INSTANT_MAX_BASELINE
                    straight to BOT_SPIKE_MIN+ (no organic ramp)
-      * plateau -- the same non-trivial player count across BOT_PLATEAU_POLLS
-                   in a row (real activity wobbles by 1-2 per minute)
+      * plateau -- a normally-empty server (baseline <= BOT_BASELINE_MAX)
+                   holding the exact same non-trivial count across
+                   BOT_PLATEAU_POLLS *distinct* master updates in a row.
+                   Cached re-reads (same hbcounter as the previous poll) are
+                   ignored so the 5-minute publish cadence on the vanilla
+                   AO master cannot manufacture a flat run on its own.
     A burst above BOT_IMPLAUSIBLE_MIN, or one whose exact count is mirrored
     on BOT_COPYCAT_MIN_PEERS+ other servers this poll, is escalated.
     The burst subsiding is reported once as `bot_spike_end` so the data
@@ -170,20 +183,6 @@ def analyze_players(recent_players, cur_players, prev_state="normal",
     baseline = statistics.median(baseline_part)
     baseline_store = int(round(baseline))
 
-    # Plateau: the same non-trivial count held perfectly across many polls.
-    # Organic counts always wobble, so a flat line of identical readings is a
-    # bot tell even when it never crosses the burst threshold.
-    plateau_run = [cur_players] + list(reversed(
-        [p for p in recent_players if p is not None]))
-    if (cur_players >= BOT_PLATEAU_MIN and len(plateau_run) >= BOT_PLATEAU_POLLS
-            and all(p == cur_players
-                    for p in plateau_run[:BOT_PLATEAU_POLLS])):
-        return ("spike", baseline_store, baseline_store,
-                ("bot_spike", "alert",
-                 f"Player count held flat at {cur_players} across "
-                 f"{BOT_PLATEAU_POLLS} polls -- organic traffic always "
-                 "wobbles, this is a bot-fill plateau."))
-
     # Popular-server lenience: a server with a meaningful historical peak is
     # known to draw a crowd. Scale the burst threshold by its peak so the
     # regular show that fills the room every weekend does not look like a
@@ -202,6 +201,42 @@ def analyze_players(recent_players, cur_players, prev_state="normal",
         if cur_players >= BOT_COPYCAT_MIN_COUNT else 0)
     peer_median = statistics.median(peers) if peers else 0
     busy_network = peer_median >= BOT_BUSY_NETWORK_MEDIAN
+
+    # Plateau: a normally-empty server that fills and then holds perfectly
+    # flat across many *distinct* master updates. Cached re-reads (same
+    # hbcounter as the previous poll) are skipped, because the vanilla
+    # Attorney Online master only refreshes each server every few minutes
+    # and the bot polls every minute -- without dedup, ~4 of every 5 polls
+    # are guaranteed duplicates and a "flat run" is meaningless. The
+    # baseline-and-busy-network guards are the same ones the burst path
+    # uses, so a server that has been sustainably busy at this count for a
+    # while (baseline already non-empty) or a master-wide busy night does
+    # not get re-flagged. Popular-server lenience does not apply here -- a
+    # popular server that bots fill still satisfies the near-empty baseline
+    # rule, so the popular-versus-bot distinction is already covered.
+    plateau_pairs = [(cur_players, cur_hbcounter)]
+    hbs = list(recent_hbcounters or [None] * len(recent_players))
+    for p, hb in zip(reversed(recent_players), reversed(hbs)):
+        if p is None:
+            continue
+        if (hb is not None and plateau_pairs[-1][1] is not None
+                and hb == plateau_pairs[-1][1]):
+            continue
+        plateau_pairs.append((p, hb))
+        if len(plateau_pairs) >= BOT_PLATEAU_POLLS:
+            break
+    if (cur_players >= BOT_PLATEAU_MIN
+            and baseline <= BOT_BASELINE_MAX
+            and not busy_network
+            and len(plateau_pairs) >= BOT_PLATEAU_POLLS
+            and all(p == cur_players for p, _ in plateau_pairs)):
+        return ("spike", baseline_store, baseline_store,
+                ("bot_spike", "alert",
+                 f"Player count held flat at {cur_players} across "
+                 f"{BOT_PLATEAU_POLLS} fresh master updates on a "
+                 f"normally-empty server (baseline ~{baseline:.0f}) -- "
+                 "spawned bot clients sit perfectly idle, this is a "
+                 "bot-fill plateau."))
 
     if baseline <= BOT_BASELINE_MAX and cur_players >= effective_spike_min:
         # Look at the previous reading: a real ramp climbs through the

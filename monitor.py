@@ -191,8 +191,9 @@ async def run_poll():
         # in `players_raw` for forensic review.
         stored_players = s["players"]
         if existing is not None:
-            recent = [r["players"] for r in db.server_history(
-                key, limit=BOT_BASELINE_WINDOW + 4)]
+            history = db.server_history(key, limit=BOT_BASELINE_WINDOW + 4)
+            recent = [r["players"] for r in history]
+            recent_hbs = [r["hbcounter"] for r in history]
             prev_state = existing["bot_state"] or "normal"
             prev_baseline = existing["bot_baseline"]
             # Peers = every other server on the same master this poll, so the
@@ -203,7 +204,9 @@ async def run_poll():
             new_state, new_baseline, filtered, p_result = analyze_players(
                 recent, s["players"], prev_state, prev_baseline,
                 server_peak=server_peaks.get(key),
-                peer_counts=peers)
+                peer_counts=peers,
+                recent_hbcounters=recent_hbs,
+                cur_hbcounter=s["hbcounter"])
             if new_state != prev_state or new_baseline != prev_baseline:
                 db.set_bot_state(key, new_state, new_baseline)
             if p_result:

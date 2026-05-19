@@ -150,6 +150,81 @@ def _migrate(c):
     if stale:
         c.executemany("DELETE FROM anomalies WHERE id=?", stale)
 
+    # Earlier builds plateau-flagged any non-trivial player count held flat
+    # across BOT_PLATEAU_POLLS bot polls, without accounting for the vanilla
+    # AO master's ~5-minute publish cadence (so ~4 in every 5 polls were
+    # cached re-reads) and without requiring a near-empty baseline (so an
+    # organically busy server triggered it just by staying steady during an
+    # RP session). The new detector dedupes by hbcounter and requires the
+    # baseline guard, so those old alerts were noise. Purge them, restore
+    # the snapshots whose `players` got substituted to the captured baseline
+    # while the spike was open, re-aggregate the affected poll totals, and
+    # clear any server still stuck in `bot_state='spike'` because its count
+    # never crossed BOT_SPIKE_MIN (so the spike-end branch never fired).
+    plateau_anoms = c.execute(
+        "SELECT id, ts, server_key FROM anomalies "
+        "WHERE type='bot_spike' AND detail LIKE 'Player count held flat at%' "
+        "ORDER BY ts").fetchall()
+    affected_ts = set()
+    drop_ids = []
+    stuck_keys = set()
+    for sp in plateau_anoms:
+        drop_ids.append(sp["id"])
+        end = c.execute(
+            "SELECT id, ts FROM anomalies "
+            "WHERE type='bot_spike_end' AND server_key=? AND ts > ? "
+            "ORDER BY ts LIMIT 1",
+            (sp["server_key"], sp["ts"])).fetchone()
+        if end is not None:
+            drop_ids.append(end["id"])
+            window = c.execute(
+                "SELECT ts FROM snapshots "
+                "WHERE server_key=? AND ts>=? AND ts<? "
+                "AND players!=players_raw",
+                (sp["server_key"], sp["ts"], end["ts"])).fetchall()
+            for w in window:
+                affected_ts.add(w["ts"])
+            c.execute(
+                "UPDATE snapshots SET players=players_raw "
+                "WHERE server_key=? AND ts>=? AND ts<? "
+                "AND players!=players_raw",
+                (sp["server_key"], sp["ts"], end["ts"]))
+        else:
+            stuck_keys.add(sp["server_key"])
+            window = c.execute(
+                "SELECT ts FROM snapshots "
+                "WHERE server_key=? AND ts>=? AND players!=players_raw",
+                (sp["server_key"], sp["ts"])).fetchall()
+            for w in window:
+                affected_ts.add(w["ts"])
+            c.execute(
+                "UPDATE snapshots SET players=players_raw "
+                "WHERE server_key=? AND ts>=? AND players!=players_raw",
+                (sp["server_key"], sp["ts"]))
+    if drop_ids:
+        c.executemany("DELETE FROM anomalies WHERE id=?",
+                      [(i,) for i in drop_ids])
+    if stuck_keys:
+        c.executemany(
+            "UPDATE servers SET bot_state='normal', bot_baseline=NULL "
+            "WHERE server_key=?", [(k,) for k in stuck_keys])
+    if affected_ts:
+        c.executemany(
+            "UPDATE polls SET player_count = ("
+            "  SELECT COALESCE(SUM(players), 0) FROM snapshots "
+            "  WHERE snapshots.ts = polls.ts"
+            ") WHERE ts=?", [(t,) for t in affected_ts])
+        c.executemany(
+            "UPDATE poll_sources SET player_count = ("
+            "  SELECT COALESCE(SUM(sn.players), 0) "
+            "  FROM snapshots sn JOIN servers sv "
+            "       ON sv.server_key = sn.server_key "
+            "  WHERE sn.ts = (SELECT ts FROM polls WHERE id=poll_sources.poll_id) "
+            "  AND sv.source = poll_sources.source"
+            ") WHERE poll_id IN ("
+            "  SELECT id FROM polls WHERE ts=?)",
+            [(t,) for t in affected_ts])
+
 
 # --- polls ---
 
