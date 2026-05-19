@@ -97,7 +97,7 @@ raw master-reported value is preserved in `snapshots.players_raw` for review.
 |-------|-------------------|--------------------------------------|
 | **Burst**       | A near-empty server (baseline &le; `BOT_BASELINE_MAX`, default 8) jumps to `BOT_SPIKE_MIN`+ players (default 40) over the last `BOT_SPIKE_POLLS` polls (default 2) | Real fills ramp up &mdash; people show up over minutes |
 | **Instant max-out** | The previous poll was &le; `BOT_INSTANT_MAX_BASELINE` (default 1) and this poll is already `BOT_SPIKE_MIN`+ | A single-poll step from nothing to a packed room is impossible organically |
-| **Plateau**     | The exact same non-trivial count (&ge; `BOT_PLATEAU_MIN`, default 20) for `BOT_PLATEAU_POLLS` polls in a row (default 8) | Real activity always wobbles by 1&ndash;2 every minute; spawned bot clients sit perfectly idle |
+| **Plateau**     | A near-empty server (baseline &le; `BOT_BASELINE_MAX`) holding the exact same non-trivial count (&ge; `BOT_PLATEAU_MIN`, default 20) across `BOT_PLATEAU_POLLS` *distinct* master updates (default 8). Cached re-reads (the master often republishes the same `hbcounter` for several polls in a row) do not count. | A fresh fill that arrives and then sits perfectly idle across that many genuine refreshes, on a server that was empty just before, is the bot-fleet signature |
 | **Implausible** | A burst that crosses `BOT_IMPLAUSIBLE_MIN` (default 200) | Numbers like this do not appear organically on any AO server |
 | **Copycat**     | A burst whose exact player count is mirrored by `BOT_COPYCAT_MIN_PEERS`+ other servers on the same master *this poll* (default 2 peers, count &ge; 10) | Independent servers do not coincidentally land on the same player count |
 
@@ -122,6 +122,16 @@ both edges of the event.
   above `BOT_BUSY_NETWORK_MEDIAN` (default 15), one server rising along with
   the rest is treated as part of an event, not a one-off fill. Step shapes
   and the obvious tells still fire.
+- **Cached master snapshots.** The vanilla AO master only refreshes each
+  server every few minutes, so consecutive bot polls often re-read the
+  exact same record. The plateau detector ignores those duplicates (same
+  `hbcounter` as the previous poll) so the master's publish cadence cannot
+  manufacture a flat run on its own.
+- **Sustainably busy servers.** A server whose baseline is already above
+  `BOT_BASELINE_MAX` is not eligible for the plateau alert -- a player
+  count holding steady on a server that has been steady for a while is
+  organic activity (RP sessions stay idle in the room for stretches),
+  not a fresh bot fill.
 
 #### Data substitution
 
@@ -169,11 +179,14 @@ default. The full list:
 | `BOT_COPYCAT_MIN_PEERS` | `2` | Number of other servers showing the same exact count to flag a copycat |
 | `BOT_COPYCAT_MIN_COUNT` | `10` | Copycat detection ignores counts below this |
 
-The same list is in `.env.example` with inline notes. Obvious tells
-(instant, plateau, implausible, copycat) ignore the ramp / popularity /
+The same list is in `.env.example` with inline notes. Step-shaped tells
+(instant, implausible, copycat) ignore the ramp / popularity /
 busy-network lenience by design &mdash; those shapes are never organic,
 so making them strict-bypass keeps the detector useful even on a server
-or a network configured for very high tolerance.
+or a network configured for very high tolerance. The plateau detector
+follows the same near-empty-baseline rule as burst and is suppressed on
+busy-network nights, because a flat count on a server that has been
+sustainably busy is just steady RP activity.
 
 ### Graphs
 
