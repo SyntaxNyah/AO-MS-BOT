@@ -92,6 +92,11 @@ HB_RESTART_WINDOW = 35
 # (the master list holds a dead entry ~30 min); a counter hitting the floor
 # faster than this never had time to actually restart -- likely a manual reset.
 HB_REAL_RESTART_MINUTES = 35
+# Slack below the restart window. Poll timing jitter means a genuine restart
+# can land a reading a little short of the window; without this margin a cycle
+# that came back seconds early would be flagged as a manual reset. Only a
+# reading this far inside the window counts as too-fast-to-be-real.
+HB_RESET_EDGE_MARGIN = 1
 
 # --- Per-master-server anomaly rules ---
 # The bot polls more than one master server, and they do not all behave the
@@ -124,6 +129,7 @@ VANILLA_HB_RULES = {
     "hb_jump_margin": HB_JUMP_MARGIN,
     "hb_restart_window": HB_RESTART_WINDOW,
     "hb_real_restart_minutes": HB_REAL_RESTART_MINUTES,
+    "hb_reset_edge_margin": HB_RESET_EDGE_MARGIN,
 }
 
 # A Umineko server can go quiet without dropping off the list: the master
@@ -153,6 +159,7 @@ UMINEKO_HB_RULES = {
     # A genuine down-and-back cycle needs the server to actually drop off the
     # list first, which takes the full expiry window.
     "hb_real_restart_minutes": UMINEKO_HEARTBEAT_EXPIRY_MINUTES,
+    "hb_reset_edge_margin": HB_RESET_EDGE_MARGIN,
 }
 
 

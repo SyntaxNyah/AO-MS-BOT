@@ -39,6 +39,7 @@ def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True, rules=None):
     jump_margin = rules["hb_jump_margin"]
     restart_window = rules["hb_restart_window"]
     real_restart_minutes = rules["hb_real_restart_minutes"]
+    reset_edge_margin = rules["hb_reset_edge_margin"]
     label = rules["label"]
 
     elapsed_min = max(elapsed_min, 0.5)
@@ -74,10 +75,12 @@ def analyze_hb(prev_hb, cur_hb, elapsed_min, reliable=True, rules=None):
     # the server was taken down and brought back. But a genuine restart takes
     # time: the master holds a dead entry for a while, so a real down-and-back
     # cycle leaves a long gap since the last reading. If the counter slammed to
-    # the floor with less than real_restart_minutes elapsed, the server never
-    # had time to actually go down -- that points to a hand-reset counter.
+    # the floor well short of real_restart_minutes elapsed, the server never
+    # had time to actually go down -- that points to a hand-reset counter. A
+    # small edge margin keeps a restart that came back just shy of the window
+    # (poll timing jitter) from being mistaken for a manual reset.
     if 0 <= cur_hb <= restart_window:
-        if elapsed_min < real_restart_minutes:
+        if elapsed_min < real_restart_minutes - reset_edge_margin:
             return ("hb_reset", "alert",
                     f"HB slammed {prev_hb} -> {cur_hb} after only "
                     f"{elapsed_min:.1f} min -- too fast for a genuine restart "
