@@ -126,20 +126,33 @@ VANILLA_HB_RULES = {
     "hb_real_restart_minutes": HB_REAL_RESTART_MINUTES,
 }
 
+# A Umineko server can go quiet without dropping off the list: the master
+# keeps a silent server listed for MS_UMINEKO_HEARTBEAT_EXPIRY_MINUTES (~60).
+# The counter is only advanced when a heartbeat actually arrives, so when a
+# quiet server resumes, its next heartbeat credits every elapsed real minute
+# at once -- a single, legitimate leap of up to the whole expiry window, even
+# though the bot's own poll gap is only a minute. Anomaly tolerances that
+# depend on a single-step jump must clear that window or every resumed server
+# would false-positive.
+UMINEKO_HEARTBEAT_EXPIRY_MINUTES = _int(
+    "MS_UMINEKO_HEARTBEAT_EXPIRY_MINUTES", 60)
+
 UMINEKO_HB_RULES = {
     "label": "Umineko Online",
     "hb_cap": _int("MS_UMINEKO_HBCOUNTER_CAP", 10080),
     "rollover_drop": _int("MS_UMINEKO_HBCOUNTER_ROLLOVER_DROP", 1080),
-    # Clock-anchored: climbs ~1/min and cannot be inflated, so little slack.
+    # Clock-anchored: the counter can never outpace real time, so a modest
+    # per-minute rate with a little slack is all the rollover model needs.
     "hb_rate_max": 1.5,
     "hb_margin": 4,
-    # The counter does not arrive in big batchy leaps -- a modest jump margin.
-    "hb_jump_margin": 8,
+    # A quiet-then-resumed server leaps by up to one whole expiry window in a
+    # single heartbeat (see above), so the jump margin clears that plus slack.
+    "hb_jump_margin": UMINEKO_HEARTBEAT_EXPIRY_MINUTES + 5,
     # Registration sets the counter to 1, so a restarted server reads near 0.
     "hb_restart_window": 10,
-    # Stale servers are held on the list ~60 min, so a genuine down-and-back
-    # cycle leaves at least that long a gap since the last reading.
-    "hb_real_restart_minutes": 60,
+    # A genuine down-and-back cycle needs the server to actually drop off the
+    # list first, which takes the full expiry window.
+    "hb_real_restart_minutes": UMINEKO_HEARTBEAT_EXPIRY_MINUTES,
 }
 
 
