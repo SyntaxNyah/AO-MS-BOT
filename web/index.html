@@ -226,7 +226,7 @@ const PALETTE = ["#7c9cff","#41c97a","#e8a13a","#f0524b","#a472f0","#3fc8d4",
   "#4fb0e0","#e0726b","#7ad48f"];
 
 const state = { tab:"dashboard", period:"all", meta:{}, sort:{},
-                 compareSel:[], master:"all" };
+                 compareSel:[], master:"all", heatTz:"local" };
 let refreshTimer = null;
 
 // ---- tiny helpers --------------------------------------------------------
@@ -393,13 +393,30 @@ function heatColor(t){
     Math.round(a[1]+(b[1]-a[1])*t)+","+
     Math.round(a[2]+(b[2]-a[2])*t)+")";
 }
-function heatmap(matrix,days){
+// Server sends matrix[weekday][hour] in UTC. If `localTime` is set, we shift
+// each cell by the browser's UTC offset (rounded to the nearest hour, since
+// the buckets are hourly) so the chart reads in the viewer's own time zone.
+function shiftMatrixToLocal(matrix){
+  const offH=Math.round(-new Date().getTimezoneOffset()/60);
+  if(!offH) return matrix;
+  const out=[[],[],[],[],[],[],[]].map(()=>new Array(24).fill(null));
+  for(let d=0;d<7;d++) for(let h=0;h<24;h++){
+    const local=h+offH;
+    const lh=((local%24)+24)%24;
+    const ld=((d+Math.floor(local/24))%7+7)%7;
+    out[ld][lh]=matrix[d][h];
+  }
+  return out;
+}
+function heatmap(matrix,days,localTime){
+  const m=localTime?shiftMatrixToLocal(matrix):matrix;
   let vals=[];
-  matrix.forEach(row=>row.forEach(v=>{ if(v!=null) vals.push(v); }));
+  m.forEach(row=>row.forEach(v=>{ if(v!=null) vals.push(v); }));
   if(!vals.length) return emptyBox("No activity data yet.");
   const max=Math.max(...vals),min=Math.min(...vals);
   const W=1000,cell=30,LW=46,TOP=22,H=TOP+7*cell+14;
   const cw=(W-LW)/24;
+  const tzlabel=localTime?"local":"UTC";
   let s="";
   for(let h=0;h<24;h+=2)
     s+=`<text x="${LW+cw*h+cw/2}" y="14" class="xlab">${h}:00</text>`;
@@ -407,17 +424,30 @@ function heatmap(matrix,days){
     s+=`<text x="${LW-8}" y="${TOP+cell*d+cell/2+4}" class="ylab">`+
        `${days[d]}</text>`;
     for(let h=0;h<24;h++){
-      const v=matrix[d][h];
+      const v=m[d][h];
       const x=LW+cw*h,y=TOP+cell*d;
       const fill=v==null?"#12161e":heatColor((v-min)/((max-min)||1));
       s+=`<rect x="${x+1.5}" y="${y+1.5}" width="${cw-3}" `+
          `height="${cell-3}" rx="3" fill="${fill}"><title>${days[d]} `+
-         `${h}:00 — ${v==null?"no data":v+" players avg"}</title></rect>`;
+         `${h}:00 ${tzlabel} — ${v==null?"no data":v+" players avg"}`+
+         `</title></rect>`;
     }
   }
   const wrap=el("div","chartwrap");
   wrap.innerHTML=`<svg viewBox="0 0 ${W} ${H}" class="chart">${s}</svg>`;
   return wrap;
+}
+// Human-readable description of the browser's time zone for the heatmap label.
+function tzDescription(){
+  let name="";
+  try { name=Intl.DateTimeFormat().resolvedOptions().timeZone||""; }
+  catch(e){}
+  const offMin=-new Date().getTimezoneOffset();
+  const sign=offMin>=0?"+":"-";
+  const a=Math.abs(offMin);
+  const off="UTC"+sign+String(Math.floor(a/60)).padStart(2,"0")+
+            ":"+String(a%60).padStart(2,"0");
+  return name?name+" · "+off:off;
 }
 function timelineStrip(segs){
   if(!segs || !segs.length) return emptyBox("No poll history for this range.");
@@ -1037,9 +1067,22 @@ async function renderActivity(view){
   const d=await getJSON("/api/activity?period="+state.period);
   view.appendChild(periodBar());
   const c=card("Busiest times — average players by hour & weekday");
+  const local=state.heatTz!=="utc";
+  const zone=local?tzDescription():"UTC";
   c.querySelector("h2").appendChild(el("span","sub",
-    d.polls+" polls · brighter = busier · hover a cell"));
-  c.appendChild(heatmap(d.matrix,d.days));
+    d.polls+" polls · brighter = busier · times in "+zone));
+  // Local/UTC toggle so the user can see exactly which time zone the
+  // hour axis is in (server timestamps are stored in UTC).
+  const tzbar=el("div","periods");
+  tzbar.style.margin="6px 0 10px";
+  [["local","Your local time"],["utc","UTC"]].forEach(([v,l])=>{
+    const b=el("button",
+      (v==="utc"?!local:local)?"on":"",l);
+    b.onclick=()=>{ state.heatTz=v; render(); };
+    tzbar.appendChild(b);
+  });
+  c.appendChild(tzbar);
+  c.appendChild(heatmap(d.matrix,d.days,local));
   view.appendChild(c);
 }
 
