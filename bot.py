@@ -868,6 +868,56 @@ async def stats_cmd(interaction: discord.Interaction):
 
 
 @bot.tree.command(
+    name="deletedata",
+    description="Purge all stored data for a server (by IP or IP:port).")
+@app_commands.describe(
+    ip="Server IP, or exact IP:port to target a single server on that host")
+@app_commands.default_permissions(administrator=True)
+async def deletedata_cmd(interaction: discord.Interaction, ip: str):
+    target = ip.strip()
+    if ":" in target:
+        srv = db.get_server(target)
+        if srv is None:
+            await interaction.response.send_message(
+                f"No tracked server at `{target}`.", ephemeral=True)
+            return
+        rows = [srv]
+    else:
+        rows = db.find_servers_by_ip(target)
+        if not rows:
+            await interaction.response.send_message(
+                f"No tracked servers hosted at `{target}`.", ephemeral=True)
+            return
+
+    await interaction.response.defer()
+    lines = []
+    totals = {"snapshots": 0, "anomalies": 0, "servers": 0}
+    for r in rows:
+        result = db.delete_server_data(r["server_key"])
+        totals["snapshots"] += result["snapshots"]
+        totals["anomalies"] += result["anomalies"]
+        totals["servers"] += result["server"]
+        lines.append(
+            f"- **{discord.utils.escape_markdown(r['name'])}** "
+            f"(`{r['server_key']}`) -- "
+            f"{result['snapshots']} snapshots, "
+            f"{result['anomalies']} anomalies")
+        write_event(f"deletedata: purged {r['server_key']} ({r['name']}) -- "
+                    f"{result['snapshots']} snapshots, "
+                    f"{result['anomalies']} anomalies")
+
+    embed = discord.Embed(
+        title=f"Purged {totals['servers']} server(s)",
+        description="\n".join(lines)[:4000],
+        color=0xE03A3A,
+        timestamp=datetime.now(timezone.utc))
+    embed.set_footer(
+        text=f"Removed {totals['snapshots']} snapshots and "
+             f"{totals['anomalies']} anomalies from the database.")
+    await interaction.followup.send(embed=embed)
+
+
+@bot.tree.command(
     name="deadservers",
     description="List servers absent from the master list long enough to be "
                 "considered shut down.")

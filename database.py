@@ -378,6 +378,29 @@ def find_servers(query):
             (like, like)).fetchall()
 
 
+def find_servers_by_ip(ip):
+    """Every tracked server hosted at `ip`, across all ports."""
+    with _db() as c:
+        return c.execute(
+            "SELECT * FROM servers WHERE ip=? ORDER BY port", (ip,)).fetchall()
+
+
+def delete_server_data(key):
+    """Purge every trace of one server: its row, all snapshots, all anomalies.
+
+    Returns a {"snapshots": n, "anomalies": n, "server": 0|1} tally so the
+    caller can report what was removed.
+    """
+    with _db() as c:
+        snaps = c.execute(
+            "DELETE FROM snapshots WHERE server_key=?", (key,)).rowcount
+        anoms = c.execute(
+            "DELETE FROM anomalies WHERE server_key=?", (key,)).rowcount
+        srv = c.execute(
+            "DELETE FROM servers WHERE server_key=?", (key,)).rowcount
+        return {"snapshots": snaps, "anomalies": anoms, "server": srv}
+
+
 # --- snapshots ---
 
 def add_snapshot(key, ts, name, players, hb, players_raw=None):
