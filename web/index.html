@@ -39,9 +39,10 @@
   .masters-lbl { color:var(--dim); font-size:12px; margin-right:2px; }
   .periods-date { display:inline-flex; align-items:center; gap:6px;
     margin-left:10px; padding-left:10px; border-left:1px solid var(--line); }
-  input.dateinput { background:var(--panel2); color:var(--txt);
-    border:1px solid var(--line); border-radius:18px; padding:4px 10px;
-    font-size:12px; font-family:inherit; color-scheme:dark; }
+  input.dateinput, select.dateinput { background:var(--panel2);
+    color:var(--txt); border:1px solid var(--line); border-radius:18px;
+    padding:4px 10px; font-size:12px; font-family:inherit;
+    color-scheme:dark; }
   .srvcell { display:flex; flex-direction:column; gap:2px; min-width:0; }
   .srvdesc { color:var(--dim); font-size:11px; line-height:1.35;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
@@ -228,7 +229,7 @@ const PALETTE = ["#7c9cff","#41c97a","#e8a13a","#f0524b","#a472f0","#3fc8d4",
   "#4fb0e0","#e0726b","#7ad48f"];
 
 const state = { tab:"dashboard", period:"all", meta:{}, sort:{},
-                 compareSel:[], master:"all", heatTz:"local" };
+                 compareSel:[], master:"all", heatTz:"auto" };
 let refreshTimer = null;
 
 // ---- tiny helpers --------------------------------------------------------
@@ -395,11 +396,11 @@ function heatColor(t){
     Math.round(a[1]+(b[1]-a[1])*t)+","+
     Math.round(a[2]+(b[2]-a[2])*t)+")";
 }
-// Server sends matrix[weekday][hour] in UTC. If `localTime` is set, we shift
-// each cell by the browser's UTC offset (rounded to the nearest hour, since
-// the buckets are hourly) so the chart reads in the viewer's own time zone.
-function shiftMatrixToLocal(matrix){
-  const offH=Math.round(-new Date().getTimezoneOffset()/60);
+// Server sends matrix[weekday][hour] in UTC. We shift each cell by an
+// integer UTC offset (rounded to the nearest hour, since the buckets are
+// hourly) so the chart reads in whatever zone the viewer wants.
+function shiftMatrix(matrix,offMin){
+  const offH=Math.round(offMin/60);
   if(!offH) return matrix;
   const out=[[],[],[],[],[],[],[]].map(()=>new Array(24).fill(null));
   for(let d=0;d<7;d++) for(let h=0;h<24;h++){
@@ -410,15 +411,14 @@ function shiftMatrixToLocal(matrix){
   }
   return out;
 }
-function heatmap(matrix,days,localTime){
-  const m=localTime?shiftMatrixToLocal(matrix):matrix;
+function heatmap(matrix,days,offMin,tzlabel){
+  const m=shiftMatrix(matrix,offMin);
   let vals=[];
   m.forEach(row=>row.forEach(v=>{ if(v!=null) vals.push(v); }));
   if(!vals.length) return emptyBox("No activity data yet.");
   const max=Math.max(...vals),min=Math.min(...vals);
   const W=1000,cell=30,LW=46,TOP=22,H=TOP+7*cell+14;
   const cw=(W-LW)/24;
-  const tzlabel=localTime?"local":"UTC";
   let s="";
   for(let h=0;h<24;h+=2)
     s+=`<text x="${LW+cw*h+cw/2}" y="14" class="xlab">${h}:00</text>`;
@@ -439,18 +439,53 @@ function heatmap(matrix,days,localTime){
   wrap.innerHTML=`<svg viewBox="0 0 ${W} ${H}" class="chart">${s}</svg>`;
   return wrap;
 }
-// Human-readable description of the browser's time zone for the heatmap label.
-function tzDescription(){
+// Format a UTC offset in minutes as "UTC+05:30" / "UTC-08:00".
+function fmtOffset(offMin){
+  const sign=offMin>=0?"+":"-";
+  const a=Math.abs(offMin);
+  return "UTC"+sign+String(Math.floor(a/60)).padStart(2,"0")+
+         ":"+String(a%60).padStart(2,"0");
+}
+// Auto-detected browser time zone description (IANA name + offset).
+function autoTzInfo(){
   let name="";
   try { name=Intl.DateTimeFormat().resolvedOptions().timeZone||""; }
   catch(e){}
   const offMin=-new Date().getTimezoneOffset();
-  const sign=offMin>=0?"+":"-";
-  const a=Math.abs(offMin);
-  const off="UTC"+sign+String(Math.floor(a/60)).padStart(2,"0")+
-            ":"+String(a%60).padStart(2,"0");
-  return name?name+" · "+off:off;
+  return {name, offMin, label: name?name+" · "+fmtOffset(offMin):fmtOffset(offMin)};
 }
+// Resolve the viewer's chosen heatmap zone into a fixed offset (minutes) +
+// a human label. `state.heatTz` can be:
+//   "auto"  - device-detected, follows the browser
+//   "utc"   - UTC ±00:00
+//   number  - manual offset, in minutes east of UTC (e.g. 330 = UTC+05:30)
+function resolveHeatTz(){
+  const v=state.heatTz;
+  if(v==="utc") return {offMin:0, label:"UTC", auto:false};
+  if(v==="auto" || v===undefined){
+    const a=autoTzInfo();
+    return {offMin:a.offMin, label:a.label, auto:true};
+  }
+  const n=Number(v);
+  if(!Number.isFinite(n)){
+    const a=autoTzInfo();
+    return {offMin:a.offMin, label:a.label, auto:true};
+  }
+  return {offMin:n, label:fmtOffset(n), auto:false};
+}
+// Fixed-offset options to expose in the heatmap zone picker. Covers every
+// whole-hour UTC offset plus the common half/quarter-hour ones (India,
+// Iran, Nepal, etc.) so people in those zones don't have to settle for
+// the nearest hour.
+const HEAT_TZ_OFFSETS = (function(){
+  const out=[];
+  for(let h=-12;h<=14;h++) out.push(h*60);
+  [-570,-210,210,270,330,345,390,570,630,765].forEach(o=>{
+    if(out.indexOf(o)<0) out.push(o);
+  });
+  out.sort((a,b)=>a-b);
+  return out;
+})();
 function timelineStrip(segs){
   if(!segs || !segs.length) return emptyBox("No poll history for this range.");
   const W=1000,H=46,pad=2;
@@ -494,8 +529,26 @@ function legend(series){
 }
 
 // ---- shared bits ---------------------------------------------------------
-// Is the active period a YYYY-MM-DD date pick rather than a named range?
-function isDatePeriod(p){ return /^\d{4}-\d{2}-\d{2}$/.test(p||""); }
+// Date-mode periods come in two flavours: a single `YYYY-MM-DD` day or a
+// `YYYY-MM-DD..YYYY-MM-DD` inclusive range (e.g. "2026-05-17..2026-05-20"
+// for "17th through 20th of May"). Both forms are passed straight through
+// to every API endpoint, which the backend's `_date_bounds` understands.
+function isDatePeriod(p){
+  p=p||"";
+  return /^\d{4}-\d{2}-\d{2}(\.\.\d{4}-\d{2}-\d{2})?$/.test(p);
+}
+function parseDatePeriod(p){
+  if(!p) return null;
+  const m=String(p).match(
+    /^(\d{4}-\d{2}-\d{2})(?:\.\.(\d{4}-\d{2}-\d{2}))?$/);
+  if(!m) return null;
+  let a=m[1], b=m[2]||m[1];
+  if(b<a){ const t=a; a=b; b=t; }
+  return {from:a, to:b};
+}
+function formatDatePeriod(from,to){
+  return (!to || from===to) ? from : (from+".."+to);
+}
 // Today as YYYY-MM-DD in UTC -- matches what the backend expects.
 function todayUTC(){
   const d=new Date();
@@ -510,27 +563,46 @@ function periodBar(){
     b.onclick=()=>{ state.period=v; render(); };
     box.appendChild(b);
   }
-  // Day-by-day date picker -- selecting a date sets state.period to that
-  // YYYY-MM-DD value, which every API endpoint reads as "just this UTC
-  // day". An explicit Clear restores "all time" so the named-range buttons
-  // remain useful.
+  // Date range picker -- pick `From` and (optionally) `To` to scope every
+  // chart on the page to that inclusive UTC range. Leaving `To` empty is a
+  // single-day pick. Clear restores the named ranges.
   const datebox=el("span","periods-date");
-  datebox.appendChild(el("span","masters-lbl","Day:"));
-  const inp=document.createElement("input");
-  inp.type="date";
-  inp.className="dateinput";
-  inp.max=todayUTC();
-  if(isDatePeriod(state.period)) inp.value=state.period;
-  inp.onchange=()=>{
-    if(inp.value){ state.period=inp.value; render(); }
+  datebox.appendChild(el("span","masters-lbl","Range:"));
+  const cur=isDatePeriod(state.period)?parseDatePeriod(state.period):null;
+  const today=todayUTC();
+  const inpFrom=document.createElement("input");
+  inpFrom.type="date";
+  inpFrom.className="dateinput";
+  inpFrom.max=today;
+  if(cur) inpFrom.value=cur.from;
+  const inpTo=document.createElement("input");
+  inpTo.type="date";
+  inpTo.className="dateinput";
+  inpTo.max=today;
+  if(cur) inpTo.value=cur.to;
+  // Updating either input recomputes the period. If From is empty we
+  // mirror To into it (and vice versa) so a single pick still works.
+  const apply=()=>{
+    let f=inpFrom.value, t=inpTo.value;
+    if(!f && !t) return;
+    if(!f) f=t;
+    if(!t) t=f;
+    state.period=formatDatePeriod(f,t);
+    render();
   };
-  datebox.appendChild(inp);
-  if(isDatePeriod(state.period)){
+  inpFrom.onchange=apply;
+  inpTo.onchange=apply;
+  datebox.appendChild(inpFrom);
+  datebox.appendChild(el("span","masters-lbl","→"));
+  datebox.appendChild(inpTo);
+  if(cur){
     const clr=el("button",null,"Clear");
     clr.onclick=()=>{ state.period="all"; render(); };
     datebox.appendChild(clr);
     const lbl=el("span","masters-lbl",
-      "showing UTC day "+state.period);
+      cur.from===cur.to
+        ? "showing UTC day "+cur.from
+        : "showing UTC range "+cur.from+" → "+cur.to);
     lbl.style.marginLeft="6px";
     datebox.appendChild(lbl);
   }
@@ -1069,34 +1141,54 @@ async function renderActivity(view){
   const d=await getJSON("/api/activity?period="+state.period);
   view.appendChild(periodBar());
   const c=card("Busiest times — average players by hour & weekday");
-  const local=state.heatTz!=="utc";
-  const zone=local?tzDescription():"UTC";
+  const tz=resolveHeatTz();
+  const auto=autoTzInfo();
   c.querySelector("h2").appendChild(el("span","sub",
-    d.polls+" polls · brighter = busier · times in "+zone));
+    d.polls+" polls · brighter = busier · times in "+tz.label));
   // Plain-English note telling viewers exactly which clock the axis is
-  // reading from, and that "Local" is auto-detected from their own
-  // browser/device — no IP lookup, no account setting.
+  // reading from, and that "Auto" is detected from their own browser.
   const note=el("p","tznote",
-    local
-      ? "Showing times in your device's time zone ("+zone+"), "+
-        "auto-detected from your browser. Switch to UTC if you want "+
-        "the raw server time."
-      : "Showing times in UTC (Coordinated Universal Time) — the raw "+
-        "clock the server records polls in. Switch to local to "+
-        "auto-convert to your device's time zone ("+tzDescription()+").");
+    tz.auto
+      ? "Showing times in your device's time zone ("+tz.label+"), "+
+        "auto-detected from your browser. Pick a different zone below "+
+        "if you want to compare with another region."
+      : (state.heatTz==="utc"
+          ? "Showing times in UTC (Coordinated Universal Time) — the raw "+
+            "clock the server records polls in. Auto-detected zone: "+
+            auto.label+"."
+          : "Showing times in "+tz.label+" (manual override). "+
+            "Auto-detected zone: "+auto.label+"."));
   c.appendChild(note);
-  // Local/UTC toggle so the user can see exactly which time zone the
-  // hour axis is in (server timestamps are stored in UTC).
+  // Zone picker -- quick Auto/UTC buttons plus a select for any fixed
+  // UTC offset, so viewers in any region can read the chart in their
+  // own clock without trusting the browser's auto-detect.
   const tzbar=el("div","periods");
   tzbar.style.margin="6px 0 10px";
-  [["local","Your local time"],["utc","UTC"]].forEach(([v,l])=>{
-    const b=el("button",
-      (v==="utc"?!local:local)?"on":"",l);
+  tzbar.appendChild(el("span","masters-lbl","Time zone:"));
+  [["auto","Auto (your device)"],["utc","UTC"]].forEach(([v,l])=>{
+    const b=el("button", state.heatTz===v?"on":"", l);
     b.onclick=()=>{ state.heatTz=v; render(); };
     tzbar.appendChild(b);
   });
+  const sel=document.createElement("select");
+  sel.className="dateinput";
+  sel.style.marginLeft="6px";
+  const ph=document.createElement("option");
+  ph.value=""; ph.textContent="Custom offset…";
+  sel.appendChild(ph);
+  HEAT_TZ_OFFSETS.forEach(o=>{
+    const opt=document.createElement("option");
+    opt.value=String(o); opt.textContent=fmtOffset(o);
+    if(state.heatTz!=="auto" && state.heatTz!=="utc" &&
+       Number(state.heatTz)===o) opt.selected=true;
+    sel.appendChild(opt);
+  });
+  sel.onchange=()=>{
+    if(sel.value!==""){ state.heatTz=sel.value; render(); }
+  };
+  tzbar.appendChild(sel);
   c.appendChild(tzbar);
-  c.appendChild(heatmap(d.matrix,d.days,local));
+  c.appendChild(heatmap(d.matrix,d.days,tz.offMin,tz.label));
   view.appendChild(c);
 }
 

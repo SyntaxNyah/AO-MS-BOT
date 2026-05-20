@@ -43,23 +43,46 @@ _TIERS = [
 
 
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_DATE_RANGE_RE = re.compile(r"^(\d{4}-\d{2}-\d{2})\.\.(\d{4}-\d{2}-\d{2})$")
+
+
+def _date_bounds(period):
+    """Parse a date-mode `period` and return (first_day, last_day) or None.
+
+    Accepts either `YYYY-MM-DD` (single day) or `YYYY-MM-DD..YYYY-MM-DD`
+    (inclusive range). If the user picks the range with `to` earlier than
+    `from`, the two are swapped so the call always returns the earliest
+    day first.
+    """
+    if not period:
+        return None
+    m = _DATE_RANGE_RE.match(period)
+    if m:
+        a, b = m.group(1), m.group(2)
+    elif _DATE_RE.match(period):
+        a = b = period
+    else:
+        return None
+    try:
+        d1 = datetime.strptime(a, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        d2 = datetime.strptime(b, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+    except ValueError:
+        return None
+    if d2 < d1:
+        d1, d2 = d2, d1
+    return d1, d2
 
 
 def _since(period):
     """Lower ISO bound (>=) for a period name, or None for all history.
 
-    A `period` matching `YYYY-MM-DD` selects a specific UTC calendar day:
-    the returned ISO timestamp is that day's 00:00:00+00:00, and `_until`
-    returns the next day's 00:00:00+00:00 -- pair them to scope a query to
-    exactly one day.
+    Date-mode periods (`YYYY-MM-DD` or `YYYY-MM-DD..YYYY-MM-DD`) return the
+    first day's 00:00:00+00:00; pair with `_until` to scope a query to
+    exactly that day or that inclusive range.
     """
-    if period and _DATE_RE.match(period):
-        try:
-            day = datetime.strptime(period, "%Y-%m-%d").replace(
-                tzinfo=timezone.utc)
-        except ValueError:
-            return None
-        return day.isoformat()
+    bounds = _date_bounds(period)
+    if bounds is not None:
+        return bounds[0].isoformat()
     delta = _PERIODS.get(period)
     if delta is None:
         return None
@@ -69,16 +92,14 @@ def _since(period):
 def _until(period):
     """Upper ISO bound (<) for a period name, or None when open-ended.
 
-    Only date-mode periods (`YYYY-MM-DD`) have an upper bound -- every
-    other period extends up to "now" and therefore returns None.
+    Only date-mode periods have an upper bound -- every other period
+    extends up to "now" and therefore returns None. For a range, the
+    bound is the day AFTER the last selected day so the last day's
+    polls are included.
     """
-    if period and _DATE_RE.match(period):
-        try:
-            day = datetime.strptime(period, "%Y-%m-%d").replace(
-                tzinfo=timezone.utc)
-        except ValueError:
-            return None
-        return (day + timedelta(days=1)).isoformat()
+    bounds = _date_bounds(period)
+    if bounds is not None:
+        return (bounds[1] + timedelta(days=1)).isoformat()
     return None
 
 
