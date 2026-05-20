@@ -141,6 +141,8 @@
     border-radius:20px; padding:2px 9px; color:var(--dim); }
   .exportbar { display:flex; gap:8px; align-items:center; margin:0 0 16px; }
   .explabel { color:var(--dim); font-size:12px; }
+  .tznote { color:var(--dim); font-size:12px; margin:4px 0 0;
+    max-width:780px; }
   .expbtn { background:var(--panel2); border:1px solid var(--line);
     border-radius:8px; padding:5px 12px; font-size:12px; color:var(--accent); }
   .expbtn:hover { border-color:var(--accent); }
@@ -1071,6 +1073,18 @@ async function renderActivity(view){
   const zone=local?tzDescription():"UTC";
   c.querySelector("h2").appendChild(el("span","sub",
     d.polls+" polls · brighter = busier · times in "+zone));
+  // Plain-English note telling viewers exactly which clock the axis is
+  // reading from, and that "Local" is auto-detected from their own
+  // browser/device — no IP lookup, no account setting.
+  const note=el("p","tznote",
+    local
+      ? "Showing times in your device's time zone ("+zone+"), "+
+        "auto-detected from your browser. Switch to UTC if you want "+
+        "the raw server time."
+      : "Showing times in UTC (Coordinated Universal Time) — the raw "+
+        "clock the server records polls in. Switch to local to "+
+        "auto-convert to your device's time zone ("+tzDescription()+").");
+  c.appendChild(note);
   // Local/UTC toggle so the user can see exactly which time zone the
   // hour axis is in (server timestamps are stored in UTC).
   const tzbar=el("div","periods");
