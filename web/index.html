@@ -39,13 +39,20 @@
   .masters-lbl { color:var(--dim); font-size:12px; margin-right:2px; }
   .periods-date { display:inline-flex; align-items:center; gap:6px;
     margin-left:10px; padding-left:10px; border-left:1px solid var(--line); }
-  input.dateinput { background:var(--panel2); color:var(--txt);
-    border:1px solid var(--line); border-radius:18px; padding:4px 10px;
-    font-size:12px; font-family:inherit; color-scheme:dark; }
+  input.dateinput, select.dateinput { background:var(--panel2);
+    color:var(--txt); border:1px solid var(--line); border-radius:18px;
+    padding:4px 10px; font-size:12px; font-family:inherit;
+    color-scheme:dark; }
   .srvcell { display:flex; flex-direction:column; gap:2px; min-width:0; }
+  /* Server descriptions wrap across two lines instead of being clipped to a
+     fixed 360px so they grow with whatever width the column actually has. */
   .srvdesc { color:var(--dim); font-size:11px; line-height:1.35;
-    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
-    max-width:360px; }
+    overflow:hidden; word-break:break-word; display:-webkit-box;
+    -webkit-line-clamp:2; line-clamp:2; -webkit-box-orient:vertical; }
+  /* Wrap tables in a horizontal scroller so wide tables stay readable on
+     narrow screens without squishing every column. */
+  .tblwrap { width:100%; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .tblwrap table { min-width:560px; }
   .stats { display:grid; gap:13px; margin:18px 0;
     grid-template-columns:repeat(auto-fit,minmax(135px,1fr)); }
   .stat { background:var(--panel); border:1px solid var(--line);
@@ -60,6 +67,33 @@
   .card h2 .sub { color:var(--dim); font-size:12px; font-weight:400; }
   .grid2 { display:grid; gap:20px; grid-template-columns:1.45fr 1fr; }
   @media (max-width:860px){ .grid2{ grid-template-columns:1fr; } }
+  /* Phone-sized tweaks: tighten paddings, let the period bar wrap cleanly
+     (dropping its decorative separator), and force the heatmap to scroll
+     horizontally with a comfortable minimum width so cells stay tappable. */
+  @media (max-width:640px){
+    .wrap { padding:0 12px; }
+    header { padding:14px 14px 0; }
+    header h1 { font-size:19px; }
+    header p { font-size:12px; }
+    nav a { padding:7px 11px; font-size:12px; }
+    .card { padding:14px; border-radius:11px; margin-bottom:14px; }
+    .card h2 { font-size:15px; flex-wrap:wrap; row-gap:4px; }
+    .stats { gap:9px; margin:14px 0;
+      grid-template-columns:repeat(auto-fit,minmax(118px,1fr)); }
+    .stat { padding:10px 12px; border-radius:10px; }
+    .stat .v { font-size:21px; }
+    .periods { row-gap:6px; }
+    .periods-date { margin-left:0; padding-left:0; border-left:0;
+      flex-wrap:wrap; row-gap:4px; }
+    .sheet { padding:16px; border-radius:12px; }
+    .sheet h2 { font-size:17px; }
+    .modal { padding:18px 10px; }
+    .tznote { font-size:11.5px; }
+    /* The heatmap card opts into horizontal scroll with a min-width so its
+       cells don't shrink into illegibility on a phone. */
+    .heatscroll { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+    .heatscroll .chart { min-width:640px; }
+  }
   table { width:100%; border-collapse:collapse; font-size:13px; }
   th { text-align:left; color:var(--dim); font-weight:600; font-size:11px;
     text-transform:uppercase; padding:7px 8px; border-bottom:1px solid var(--line);
@@ -141,6 +175,8 @@
     border-radius:20px; padding:2px 9px; color:var(--dim); }
   .exportbar { display:flex; gap:8px; align-items:center; margin:0 0 16px; }
   .explabel { color:var(--dim); font-size:12px; }
+  .tznote { color:var(--dim); font-size:12px; margin:4px 0 0;
+    max-width:780px; }
   .expbtn { background:var(--panel2); border:1px solid var(--line);
     border-radius:8px; padding:5px 12px; font-size:12px; color:var(--accent); }
   .expbtn:hover { border-color:var(--accent); }
@@ -226,7 +262,7 @@ const PALETTE = ["#7c9cff","#41c97a","#e8a13a","#f0524b","#a472f0","#3fc8d4",
   "#4fb0e0","#e0726b","#7ad48f"];
 
 const state = { tab:"dashboard", period:"all", meta:{}, sort:{},
-                 compareSel:[], master:"all" };
+                 compareSel:[], master:"all", heatTz:"auto" };
 let refreshTimer = null;
 
 // ---- tiny helpers --------------------------------------------------------
@@ -393,9 +429,25 @@ function heatColor(t){
     Math.round(a[1]+(b[1]-a[1])*t)+","+
     Math.round(a[2]+(b[2]-a[2])*t)+")";
 }
-function heatmap(matrix,days){
+// Server sends matrix[weekday][hour] in UTC. We shift each cell by an
+// integer UTC offset (rounded to the nearest hour, since the buckets are
+// hourly) so the chart reads in whatever zone the viewer wants.
+function shiftMatrix(matrix,offMin){
+  const offH=Math.round(offMin/60);
+  if(!offH) return matrix;
+  const out=[[],[],[],[],[],[],[]].map(()=>new Array(24).fill(null));
+  for(let d=0;d<7;d++) for(let h=0;h<24;h++){
+    const local=h+offH;
+    const lh=((local%24)+24)%24;
+    const ld=((d+Math.floor(local/24))%7+7)%7;
+    out[ld][lh]=matrix[d][h];
+  }
+  return out;
+}
+function heatmap(matrix,days,offMin,tzlabel){
+  const m=shiftMatrix(matrix,offMin);
   let vals=[];
-  matrix.forEach(row=>row.forEach(v=>{ if(v!=null) vals.push(v); }));
+  m.forEach(row=>row.forEach(v=>{ if(v!=null) vals.push(v); }));
   if(!vals.length) return emptyBox("No activity data yet.");
   const max=Math.max(...vals),min=Math.min(...vals);
   const W=1000,cell=30,LW=46,TOP=22,H=TOP+7*cell+14;
@@ -407,18 +459,66 @@ function heatmap(matrix,days){
     s+=`<text x="${LW-8}" y="${TOP+cell*d+cell/2+4}" class="ylab">`+
        `${days[d]}</text>`;
     for(let h=0;h<24;h++){
-      const v=matrix[d][h];
+      const v=m[d][h];
       const x=LW+cw*h,y=TOP+cell*d;
       const fill=v==null?"#12161e":heatColor((v-min)/((max-min)||1));
       s+=`<rect x="${x+1.5}" y="${y+1.5}" width="${cw-3}" `+
          `height="${cell-3}" rx="3" fill="${fill}"><title>${days[d]} `+
-         `${h}:00 — ${v==null?"no data":v+" players avg"}</title></rect>`;
+         `${h}:00 ${tzlabel} — ${v==null?"no data":v+" players avg"}`+
+         `</title></rect>`;
     }
   }
-  const wrap=el("div","chartwrap");
+  const wrap=el("div","chartwrap heatscroll");
   wrap.innerHTML=`<svg viewBox="0 0 ${W} ${H}" class="chart">${s}</svg>`;
   return wrap;
 }
+// Format a UTC offset in minutes as "UTC+05:30" / "UTC-08:00".
+function fmtOffset(offMin){
+  const sign=offMin>=0?"+":"-";
+  const a=Math.abs(offMin);
+  return "UTC"+sign+String(Math.floor(a/60)).padStart(2,"0")+
+         ":"+String(a%60).padStart(2,"0");
+}
+// Auto-detected browser time zone description (IANA name + offset).
+function autoTzInfo(){
+  let name="";
+  try { name=Intl.DateTimeFormat().resolvedOptions().timeZone||""; }
+  catch(e){}
+  const offMin=-new Date().getTimezoneOffset();
+  return {name, offMin, label: name?name+" · "+fmtOffset(offMin):fmtOffset(offMin)};
+}
+// Resolve the viewer's chosen heatmap zone into a fixed offset (minutes) +
+// a human label. `state.heatTz` can be:
+//   "auto"  - device-detected, follows the browser
+//   "utc"   - UTC ±00:00
+//   number  - manual offset, in minutes east of UTC (e.g. 330 = UTC+05:30)
+function resolveHeatTz(){
+  const v=state.heatTz;
+  if(v==="utc") return {offMin:0, label:"UTC", auto:false};
+  if(v==="auto" || v===undefined){
+    const a=autoTzInfo();
+    return {offMin:a.offMin, label:a.label, auto:true};
+  }
+  const n=Number(v);
+  if(!Number.isFinite(n)){
+    const a=autoTzInfo();
+    return {offMin:a.offMin, label:a.label, auto:true};
+  }
+  return {offMin:n, label:fmtOffset(n), auto:false};
+}
+// Fixed-offset options to expose in the heatmap zone picker. Covers every
+// whole-hour UTC offset plus the common half/quarter-hour ones (India,
+// Iran, Nepal, etc.) so people in those zones don't have to settle for
+// the nearest hour.
+const HEAT_TZ_OFFSETS = (function(){
+  const out=[];
+  for(let h=-12;h<=14;h++) out.push(h*60);
+  [-570,-210,210,270,330,345,390,570,630,765].forEach(o=>{
+    if(out.indexOf(o)<0) out.push(o);
+  });
+  out.sort((a,b)=>a-b);
+  return out;
+})();
 function timelineStrip(segs){
   if(!segs || !segs.length) return emptyBox("No poll history for this range.");
   const W=1000,H=46,pad=2;
@@ -462,8 +562,26 @@ function legend(series){
 }
 
 // ---- shared bits ---------------------------------------------------------
-// Is the active period a YYYY-MM-DD date pick rather than a named range?
-function isDatePeriod(p){ return /^\d{4}-\d{2}-\d{2}$/.test(p||""); }
+// Date-mode periods come in two flavours: a single `YYYY-MM-DD` day or a
+// `YYYY-MM-DD..YYYY-MM-DD` inclusive range (e.g. "2026-05-17..2026-05-20"
+// for "17th through 20th of May"). Both forms are passed straight through
+// to every API endpoint, which the backend's `_date_bounds` understands.
+function isDatePeriod(p){
+  p=p||"";
+  return /^\d{4}-\d{2}-\d{2}(\.\.\d{4}-\d{2}-\d{2})?$/.test(p);
+}
+function parseDatePeriod(p){
+  if(!p) return null;
+  const m=String(p).match(
+    /^(\d{4}-\d{2}-\d{2})(?:\.\.(\d{4}-\d{2}-\d{2}))?$/);
+  if(!m) return null;
+  let a=m[1], b=m[2]||m[1];
+  if(b<a){ const t=a; a=b; b=t; }
+  return {from:a, to:b};
+}
+function formatDatePeriod(from,to){
+  return (!to || from===to) ? from : (from+".."+to);
+}
 // Today as YYYY-MM-DD in UTC -- matches what the backend expects.
 function todayUTC(){
   const d=new Date();
@@ -478,27 +596,46 @@ function periodBar(){
     b.onclick=()=>{ state.period=v; render(); };
     box.appendChild(b);
   }
-  // Day-by-day date picker -- selecting a date sets state.period to that
-  // YYYY-MM-DD value, which every API endpoint reads as "just this UTC
-  // day". An explicit Clear restores "all time" so the named-range buttons
-  // remain useful.
+  // Date range picker -- pick `From` and (optionally) `To` to scope every
+  // chart on the page to that inclusive UTC range. Leaving `To` empty is a
+  // single-day pick. Clear restores the named ranges.
   const datebox=el("span","periods-date");
-  datebox.appendChild(el("span","masters-lbl","Day:"));
-  const inp=document.createElement("input");
-  inp.type="date";
-  inp.className="dateinput";
-  inp.max=todayUTC();
-  if(isDatePeriod(state.period)) inp.value=state.period;
-  inp.onchange=()=>{
-    if(inp.value){ state.period=inp.value; render(); }
+  datebox.appendChild(el("span","masters-lbl","Range:"));
+  const cur=isDatePeriod(state.period)?parseDatePeriod(state.period):null;
+  const today=todayUTC();
+  const inpFrom=document.createElement("input");
+  inpFrom.type="date";
+  inpFrom.className="dateinput";
+  inpFrom.max=today;
+  if(cur) inpFrom.value=cur.from;
+  const inpTo=document.createElement("input");
+  inpTo.type="date";
+  inpTo.className="dateinput";
+  inpTo.max=today;
+  if(cur) inpTo.value=cur.to;
+  // Updating either input recomputes the period. If From is empty we
+  // mirror To into it (and vice versa) so a single pick still works.
+  const apply=()=>{
+    let f=inpFrom.value, t=inpTo.value;
+    if(!f && !t) return;
+    if(!f) f=t;
+    if(!t) t=f;
+    state.period=formatDatePeriod(f,t);
+    render();
   };
-  datebox.appendChild(inp);
-  if(isDatePeriod(state.period)){
+  inpFrom.onchange=apply;
+  inpTo.onchange=apply;
+  datebox.appendChild(inpFrom);
+  datebox.appendChild(el("span","masters-lbl","→"));
+  datebox.appendChild(inpTo);
+  if(cur){
     const clr=el("button",null,"Clear");
     clr.onclick=()=>{ state.period="all"; render(); };
     datebox.appendChild(clr);
     const lbl=el("span","masters-lbl",
-      "showing UTC day "+state.period);
+      cur.from===cur.to
+        ? "showing UTC day "+cur.from
+        : "showing UTC range "+cur.from+" → "+cur.to);
     lbl.style.marginLeft="6px";
     datebox.appendChild(lbl);
   }
@@ -622,7 +759,12 @@ function sortTable(cols,rows,tableId,onRowClick){
     tb.appendChild(tr);
   }
   t.appendChild(tb);
-  return t;
+  // Wrap in a horizontal scroller -- on narrow screens the table keeps its
+  // natural column widths instead of squishing every cell, and the user
+  // swipes sideways to reach the trailing columns.
+  const wrap=el("div","tblwrap");
+  wrap.appendChild(t);
+  return wrap;
 }
 function statusPill(s){
   return el("span","pill "+(s==="online"?"on-pill":"off-pill"),s);
@@ -659,8 +801,9 @@ async function renderDashboard(view){
         a.onclick=(ev)=>{ ev.stopPropagation(); openServer(r.key); };
         wrap.appendChild(a);
         if(r.description && String(r.description).trim()){
-          const d=el("div","srvdesc",clip(String(r.description).trim(),96));
-          d.title=String(r.description).trim();
+          const txt=String(r.description).trim();
+          const d=el("div","srvdesc",txt);
+          d.title=txt;
           wrap.appendChild(d);
         }
         return wrap;
@@ -714,8 +857,9 @@ async function renderServers(view){
         a.onclick=(ev)=>{ ev.stopPropagation(); openServer(r.key); };
         wrap.appendChild(a);
         if(r.description && String(r.description).trim()){
-          const d=el("div","srvdesc",clip(String(r.description).trim(),96));
-          d.title=String(r.description).trim();
+          const txt=String(r.description).trim();
+          const d=el("div","srvdesc",txt);
+          d.title=txt;
           wrap.appendChild(d);
         }
         return wrap;
@@ -1037,9 +1181,54 @@ async function renderActivity(view){
   const d=await getJSON("/api/activity?period="+state.period);
   view.appendChild(periodBar());
   const c=card("Busiest times — average players by hour & weekday");
+  const tz=resolveHeatTz();
+  const auto=autoTzInfo();
   c.querySelector("h2").appendChild(el("span","sub",
-    d.polls+" polls · brighter = busier · hover a cell"));
-  c.appendChild(heatmap(d.matrix,d.days));
+    d.polls+" polls · brighter = busier · times in "+tz.label));
+  // Plain-English note telling viewers exactly which clock the axis is
+  // reading from, and that "Auto" is detected from their own browser.
+  const note=el("p","tznote",
+    tz.auto
+      ? "Showing times in your device's time zone ("+tz.label+"), "+
+        "auto-detected from your browser. Pick a different zone below "+
+        "if you want to compare with another region."
+      : (state.heatTz==="utc"
+          ? "Showing times in UTC (Coordinated Universal Time) — the raw "+
+            "clock the server records polls in. Auto-detected zone: "+
+            auto.label+"."
+          : "Showing times in "+tz.label+" (manual override). "+
+            "Auto-detected zone: "+auto.label+"."));
+  c.appendChild(note);
+  // Zone picker -- quick Auto/UTC buttons plus a select for any fixed
+  // UTC offset, so viewers in any region can read the chart in their
+  // own clock without trusting the browser's auto-detect.
+  const tzbar=el("div","periods");
+  tzbar.style.margin="6px 0 10px";
+  tzbar.appendChild(el("span","masters-lbl","Time zone:"));
+  [["auto","Auto (your device)"],["utc","UTC"]].forEach(([v,l])=>{
+    const b=el("button", state.heatTz===v?"on":"", l);
+    b.onclick=()=>{ state.heatTz=v; render(); };
+    tzbar.appendChild(b);
+  });
+  const sel=document.createElement("select");
+  sel.className="dateinput";
+  sel.style.marginLeft="6px";
+  const ph=document.createElement("option");
+  ph.value=""; ph.textContent="Custom offset…";
+  sel.appendChild(ph);
+  HEAT_TZ_OFFSETS.forEach(o=>{
+    const opt=document.createElement("option");
+    opt.value=String(o); opt.textContent=fmtOffset(o);
+    if(state.heatTz!=="auto" && state.heatTz!=="utc" &&
+       Number(state.heatTz)===o) opt.selected=true;
+    sel.appendChild(opt);
+  });
+  sel.onchange=()=>{
+    if(sel.value!==""){ state.heatTz=sel.value; render(); }
+  };
+  tzbar.appendChild(sel);
+  c.appendChild(tzbar);
+  c.appendChild(heatmap(d.matrix,d.days,tz.offMin,tz.label));
   view.appendChild(c);
 }
 
